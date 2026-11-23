@@ -40,11 +40,11 @@ String norm(String s) {
   }
   return r.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 }
-
 class AppState extends ChangeNotifier {
   List<Entry> words = [];
   List<Phrase> phrases = [];
   Set<String> favs = {};
+  String errorMsg = '';
   SharedPreferences? _p;
   final player = AudioPlayer();
 
@@ -63,11 +63,16 @@ class AppState extends ChangeNotifier {
           .map((e) => Entry(e))
           .where((w) => (w.fr.isNotEmpty && w.fr != '-') || (w.so.isNotEmpty && w.so != '-'))
           .toList();
+      if (words.isEmpty) errorMsg = 'Fichier lu mais 0 mot trouvé. Début du fichier : ${raw.substring(0, raw.length > 80 ? 80 : raw.length)}';
       _p = await SharedPreferences.getInstance();
       favs = (_p!.getStringList('favs') ?? []).toSet();
-    } catch (_) {}
+    } catch (e) {
+      errorMsg = 'Erreur de lecture : $e';
+    }
     notifyListeners();
   }
+
+
 
   void toggleFav(String id) {
     favs.contains(id) ? favs.remove(id) : favs.add(id);
@@ -239,7 +244,8 @@ class _SearchPageState extends State<SearchPage> {
           child: Text(q.isEmpty ? 'Tous les mots (${res.length})' : '${res.length} résultat(s)', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
         ),
       ),
-      Expanded(child: res.isEmpty ? const Center(child: Text('Aucun mot trouvé')) : ListView.builder(itemCount: res.length, itemBuilder: (_, i) => WordTile(res[i]))),
+      Expanded(child: res.isEmpty ? Center(child: Padding(padding: const EdgeInsets.all(16), child: Text(state.errorMsg.isNotEmpty ? state.errorMsg : 'Aucun mot trouvé', style: const TextStyle(color: Colors.red))))
+ : ListView.builder(itemCount: res.length, itemBuilder: (_, i) => WordTile(res[i]))),
     ]);
   }
 }
