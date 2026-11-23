@@ -310,3 +310,100 @@ class _DictPageState extends State<DictPage> {
         height: 48,
         child: ListView(scrollDirection: Axis.horizontal, children: [
           Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: ChoiceChip(
+                  label: const Text('Tous'),
+                  selected: theme == null,
+                  onSelected: (_) => setState(() => theme = null))),
+          for (final t in themes)
+            Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: ChoiceChip(
+                    label: Text(t),
+                    selected: theme == t,
+                    onSelected: (_) => setState(() => theme = t))),
+        ]),
+      ),
+      Expanded(
+        child: ListView.builder(
+            itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i])),
+      ),
+    ]);
+  }
+}
+
+class PhrasesPage extends StatefulWidget {
+  const PhrasesPage({super.key});
+  @override
+  State<PhrasesPage> createState() => _PhrasesPageState();
+}
+
+class _PhrasesPageState extends State<PhrasesPage> {
+  String q = '';
+  @override
+  Widget build(BuildContext context) {
+    final n = norm(q);
+    final list = state.phrases
+        .where((p) => n.isEmpty || norm(p.fr).contains(n) || norm(p.so).contains(n))
+        .toList();
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.all(12),
+        child: TextField(
+          decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: 'Rechercher une phrase…',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+          onChanged: (v) => setState(() => q = v),
+        ),
+      ),
+      Expanded(
+        child: ListView.builder(
+          itemCount: list.length,
+          itemBuilder: (_, i) {
+            final p = list[i];
+            final fav = state.favs.contains(p.id);
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: ListTile(
+                title: Text(p.fr),
+                subtitle: Text(p.so,
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
+                trailing: IconButton(
+                    icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber),
+                    onPressed: () => state.toggleFav(p.id)),
+              ),
+            );
+          },
+        ),
+      ),
+    ]);
+  }
+}
+
+class FavsPage extends StatelessWidget {
+  const FavsPage({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final ws = state.words.where((w) => state.favs.contains(w.id)).toList();
+    final ps = state.phrases.where((p) => state.favs.contains(p.id)).toList();
+    if (ws.isEmpty && ps.isEmpty) {
+      return const Center(child: Text("Aucun favori pour l'instant ⭐"));
+    }
+    return ListView(children: [
+      for (final w in ws) WordTile(w),
+      for (final p in ps)
+        Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: ListTile(
+            title: Text(p.fr),
+            subtitle: Text(p.so,
+                style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
+            trailing: IconButton(
+                icon: const Icon(Icons.star, color: Colors.amber),
+                onPressed: () => state.toggleFav(p.id)),
+          ),
+        ),
+    ]);
+  }
+}
