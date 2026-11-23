@@ -11,23 +11,23 @@ const violet = Color(0xFF5B3CC4);
 class Entry {
   final String fr, so, audioSo, audioFr, theme, phon, exSo, exFr, keywords;
   Entry(Map<String, dynamic> j)
-      : fr = (j['Mots français'] ?? j['fr'] ?? '').toString(),
-        so = (j['Mots soninké'] ?? j['so'] ?? '').toString(),
-        audioSo = (j['Audio_Soninké'] ?? j['audioSo'] ?? '').toString(),
-        audioFr = (j['Audio_Français'] ?? j['audioFr'] ?? '').toString(),
-        theme = (j['Thème'] ?? j['theme'] ?? '').toString(),
-        phon = (j['phonetique micro'] ?? j['phon'] ?? '').toString(),
-        exSo = (j['Exemple soninké'] ?? '').toString(),
-        exFr = (j['Exemple français'] ?? '').toString(),
-        keywords = (j['mots clés-recherche'] ?? '').toString();
+      : fr = (j['Mots français'] ?? j['fr'] ?? '').toString().trim(),
+        so = (j['Mots soninké'] ?? j['so'] ?? '').toString().trim(),
+        audioSo = (j['Audio_Soninké'] ?? j['audioSo'] ?? '').toString().trim(),
+        audioFr = (j['Audio_Français'] ?? j['audioFr'] ?? '').toString().trim(),
+        theme = (j['Thème'] ?? j['theme'] ?? '').toString().trim(),
+        phon = (j['phonetique micro'] ?? j['phon'] ?? '').toString().trim(),
+        exSo = (j['Exemple soninké'] ?? '').toString().trim(),
+        exFr = (j['Exemple français'] ?? '').toString().trim(),
+        keywords = (j['mots clés-recherche'] ?? '').toString().trim();
   String get id => '$fr|$so';
 }
 
 class Phrase {
   final String fr, so;
   Phrase(Map<String, dynamic> j)
-      : fr = (j['Mots français'] ?? j['fr'] ?? '').toString(),
-        so = (j['Mots soninké'] ?? j['so'] ?? '').toString();
+      : fr = (j['Mots français'] ?? j['fr'] ?? '').toString().trim(),
+        so = (j['Mots soninké'] ?? j['so'] ?? '').toString().trim();
   String get id => 'p:$fr|$so';
 }
 
@@ -49,17 +49,23 @@ class AppState extends ChangeNotifier {
   final player = AudioPlayer();
 
   Future<void> load() async {
-    final raw = await rootBundle.loadString('assets/data/data.json');
-    final j = jsonDecode(raw);
-    if (j is List) {
-      words = j.map((e) => Entry(e)).where((w) => w.fr.isNotEmpty || w.so.isNotEmpty).toList();
-      phrases = [];
-    } else if (j is Map) {
-      words = ((j['words'] ?? []) as List).map((e) => Entry(e)).toList();
-      phrases = ((j['phrases'] ?? []) as List).map((e) => Phrase(e)).toList();
-    }
-    _p = await SharedPreferences.getInstance();
-    favs = (_p!.getStringList('favs') ?? []).toSet();
+    try {
+      final raw = await rootBundle.loadString('assets/data/data.json');
+      final j = jsonDecode(raw);
+      List rawList = [];
+      if (j is List) {
+        rawList = j;
+      } else if (j is Map) {
+        rawList = (j['words'] ?? []) as List;
+        phrases = ((j['phrases'] ?? []) as List).map((e) => Phrase(e)).toList();
+      }
+      words = rawList
+          .map((e) => Entry(e))
+          .where((w) => (w.fr.isNotEmpty && w.fr != '-') || (w.so.isNotEmpty && w.so != '-'))
+          .toList();
+      _p = await SharedPreferences.getInstance();
+      favs = (_p!.getStringList('favs') ?? []).toSet();
+    } catch (_) {}
     notifyListeners();
   }
 
@@ -98,8 +104,7 @@ class SoninkeEchoApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
         title: "Sonink'Écho",
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: violet), useMaterial3: true),
+        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: violet), useMaterial3: true),
         home: const Home(),
       );
 }
@@ -121,12 +126,7 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      const SearchPage(),
-      const DictPage(),
-      const PhrasesPage(),
-      const FavsPage(),
-    ];
+    final pages = [const SearchPage(), const DictPage(), const PhrasesPage(), const FavsPage()];
     return Scaffold(
       appBar: AppBar(title: const Text("Sonink'Écho")),
       body: pages[tab],
@@ -143,7 +143,6 @@ class _HomeState extends State<Home> {
     );
   }
 }
-
 class WordTile extends StatelessWidget {
   final Entry e;
   const WordTile(this.e, {super.key});
@@ -161,47 +160,23 @@ class WordTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    e.so,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
+                  Text(e.so, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                   if (e.phon.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(
-                      '[${e.phon}]',
-                      style: const TextStyle(
-                        fontStyle: FontStyle.italic,
-                        color: violet,
-                        fontSize: 14,
-                      ),
-                    ),
+                    Text('[${e.phon}]', style: const TextStyle(fontStyle: FontStyle.italic, color: violet, fontSize: 14)),
                   ],
                   const SizedBox(height: 4),
-                  Text(
-                    e.fr,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                  ),
+                  Text(e.fr, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
                   if (e.exSo.isNotEmpty || e.exFr.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Container(
                       padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                      decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (e.exSo.isNotEmpty)
-                            Text(
-                              '« ${e.exSo} »',
-                              style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 13),
-                            ),
-                          if (e.exFr.isNotEmpty)
-                            Text(
-                              e.exFr,
-                              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                            ),
+                          if (e.exSo.isNotEmpty) Text('« ${e.exSo} »', style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 13)),
+                          if (e.exFr.isNotEmpty) Text(e.exFr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
                         ],
                       ),
                     ),
@@ -210,37 +185,17 @@ class WordTile extends StatelessWidget {
                     const SizedBox(height: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: violet.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        e.theme,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: violet,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      decoration: BoxDecoration(color: violet.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                      child: Text(e.theme, style: const TextStyle(fontSize: 11, color: violet, fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ],
               ),
             ),
             Row(mainAxisSize: MainAxisSize.min, children: [
-              if (e.audioFr.isNotEmpty)
-                IconButton(
-                    tooltip: 'Écouter en français',
-                    icon: const Icon(Icons.volume_up, color: Colors.blue),
-                    onPressed: () => state.play(e.audioFr)),
-              if (e.audioSo.isNotEmpty)
-                IconButton(
-                    tooltip: 'Écouter en soninké',
-                    icon: const Icon(Icons.volume_up, color: Colors.green),
-                    onPressed: () => state.play(e.audioSo)),
-              IconButton(
-                  icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber),
-                  onPressed: () => state.toggleFav(e.id)),
+              if (e.audioFr.isNotEmpty) IconButton(icon: const Icon(Icons.volume_up, color: Colors.blue), onPressed: () => state.play(e.audioFr)),
+              if (e.audioSo.isNotEmpty) IconButton(icon: const Icon(Icons.volume_up, color: Colors.green), onPressed: () => state.play(e.audioSo)),
+              IconButton(icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber), onPressed: () => state.toggleFav(e.id)),
             ]),
           ],
         ),
@@ -258,13 +213,8 @@ class SearchPage extends StatefulWidget {
 class _SearchPageState extends State<SearchPage> {
   String q = '';
   final _ctrl = TextEditingController();
-
   @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
+  void dispose() { _ctrl.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) {
     final res = state.search(q);
@@ -275,15 +225,7 @@ class _SearchPageState extends State<SearchPage> {
           controller: _ctrl,
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
-            suffixIcon: q.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      _ctrl.clear();
-                      setState(() => q = '');
-                    },
-                  )
-                : null,
+            suffixIcon: q.isNotEmpty ? IconButton(icon: const Icon(Icons.clear), onPressed: () { _ctrl.clear(); setState(() => q = ''); }) : null,
             hintText: 'Filtrer parmi ${state.words.length} mots…',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
@@ -294,22 +236,10 @@ class _SearchPageState extends State<SearchPage> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: Text(
-            q.isEmpty
-                ? 'Tous les mots (${res.length})'
-                : '${res.length} résultat(s) trouvé(s)',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
+          child: Text(q.isEmpty ? 'Tous les mots (${res.length})' : '${res.length} résultat(s)', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
         ),
       ),
-      Expanded(
-        child: res.isEmpty
-            ? const Center(child: Text('Aucun mot trouvé'))
-            : ListView.builder(
-                itemCount: res.length,
-                itemBuilder: (_, i) => WordTile(res[i]),
-              ),
-      ),
+      Expanded(child: res.isEmpty ? const Center(child: Text('Aucun mot trouvé')) : ListView.builder(itemCount: res.length, itemBuilder: (_, i) => WordTile(res[i]))),
     ]);
   }
 }
@@ -332,10 +262,7 @@ class _DictPageState extends State<DictPage> {
       Padding(
         padding: const EdgeInsets.all(12),
         child: SegmentedButton<bool>(
-          segments: const [
-            ButtonSegment(value: true, label: Text('Français → Soninké')),
-            ButtonSegment(value: false, label: Text('Soninké → Français')),
-          ],
+          segments: const [ButtonSegment(value: true, label: Text('Français → Soninké')), ButtonSegment(value: false, label: Text('Soninké → Français'))],
           selected: {frToSo},
           onSelectionChanged: (s) => setState(() => frToSo = s.first),
         ),
@@ -343,25 +270,11 @@ class _DictPageState extends State<DictPage> {
       SizedBox(
         height: 48,
         child: ListView(scrollDirection: Axis.horizontal, children: [
-          Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: ChoiceChip(
-                  label: const Text('Tous'),
-                  selected: theme == null,
-                  onSelected: (_) => setState(() => theme = null))),
-          for (final t in themes)
-            Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: ChoiceChip(
-                    label: Text(t),
-                    selected: theme == t,
-                    onSelected: (_) => setState(() => theme = t))),
+          Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: ChoiceChip(label: const Text('Tous'), selected: theme == null, onSelected: (_) => setState(() => theme = null))),
+          for (final t in themes) Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: ChoiceChip(label: Text(t), selected: theme == t, onSelected: (_) => setState(() => theme = t))),
         ]),
       ),
-      Expanded(
-        child: ListView.builder(
-            itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i])),
-      ),
+      Expanded(child: ListView.builder(itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i]))),
     ]);
   }
 }
@@ -377,17 +290,12 @@ class _PhrasesPageState extends State<PhrasesPage> {
   @override
   Widget build(BuildContext context) {
     final n = norm(q);
-    final list = state.phrases
-        .where((p) => n.isEmpty || norm(p.fr).contains(n) || norm(p.so).contains(n))
-        .toList();
+    final list = state.phrases.where((p) => n.isEmpty || norm(p.fr).contains(n) || norm(p.so).contains(n)).toList();
     return Column(children: [
       Padding(
         padding: const EdgeInsets.all(12),
         child: TextField(
-          decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: 'Rechercher une phrase…',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+          decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: 'Rechercher une phrase…', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
           onChanged: (v) => setState(() => q = v),
         ),
       ),
@@ -401,11 +309,8 @@ class _PhrasesPageState extends State<PhrasesPage> {
               margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: ListTile(
                 title: Text(p.fr),
-                subtitle: Text(p.so,
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
-                trailing: IconButton(
-                    icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber),
-                    onPressed: () => state.toggleFav(p.id)),
+                subtitle: Text(p.so, style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
+                trailing: IconButton(icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber), onPressed: () => state.toggleFav(p.id)),
               ),
             );
           },
@@ -421,23 +326,17 @@ class FavsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final ws = state.words.where((w) => state.favs.contains(w.id)).toList();
     final ps = state.phrases.where((p) => state.favs.contains(p.id)).toList();
-    if (ws.isEmpty && ps.isEmpty) {
-      return const Center(child: Text("Aucun favori pour l'instant ⭐"));
-    }
+    if (ws.isEmpty && ps.isEmpty) return const Center(child: Text("Aucun favori pour l'instant ⭐"));
     return ListView(children: [
       for (final w in ws) WordTile(w),
-      for (final p in ps)
-        Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: ListTile(
-            title: Text(p.fr),
-            subtitle: Text(p.so,
-                style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
-            trailing: IconButton(
-                icon: const Icon(Icons.star, color: Colors.amber),
-                onPressed: () => state.toggleFav(p.id)),
-          ),
+      for (final p in ps) Card(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: ListTile(
+          title: Text(p.fr),
+          subtitle: Text(p.so, style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
+          trailing: IconButton(icon: const Icon(Icons.star, color: Colors.amber), onPressed: () => state.toggleFav(p.id)),
         ),
+      ),
     ]);
   }
 }
