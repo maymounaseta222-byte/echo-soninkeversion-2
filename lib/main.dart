@@ -6,28 +6,69 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const SoninkeEchoApp());
 
-const violet = Color(0xFF5B3CC4);
+// ---------- Couleurs ----------
+const violet = Color(0xFF6A3DE8);
+const rose = Color(0xFFE040FB);
+const orange = Color(0xFFFF7A00);
+const turquoise = Color(0xFF00B8A9);
+const fond = Color(0xFFF5F2FF);
 
+const palette = [
+  Color(0xFF7C4DFF),
+  Color(0xFFFF6D00),
+  Color(0xFF00BFA5),
+  Color(0xFFE91E63),
+  Color(0xFF2979FF),
+  Color(0xFFFFAB00),
+  Color(0xFF43A047),
+  Color(0xFFD500F9),
+];
+
+Color themeColor(String t) {
+  if (t.isEmpty) return violet;
+  var s = 0;
+  for (final c in t.codeUnits) {
+    s += c;
+  }
+  return palette[s % palette.length];
+}
+
+IconData themeIcon(String t) {
+  final x = t.toLowerCase();
+  if (x.contains('animaux')) return Icons.pets;
+  if (x.contains('corps')) return Icons.accessibility_new;
+  if (x.contains('cole')) return Icons.school;
+  if (x.contains('famille')) return Icons.family_restroom;
+  if (x.contains('salut')) return Icons.waving_hand;
+  if (x.contains('aliment') || x.contains('cuisine')) return Icons.restaurant;
+  if (x.contains('couleur')) return Icons.palette;
+  if (x.contains('question')) return Icons.help_outline;
+  if (x.contains('politesse')) return Icons.favorite;
+  if (x.contains('quotidien')) return Icons.wb_sunny;
+  if (x.contains('logement')) return Icons.home;
+  return Icons.label;
+}
+
+String cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+// ---------- Données ----------
 class Entry {
-  final String fr, so, audioSo, audioFr, theme, phon, exSo, exFr, keywords;
+  final String fr, so, audioSo, audioFr, theme, phon;
   Entry(Map<String, dynamic> j)
-      : fr = (j['Mots français'] ?? j['fr'] ?? '').toString().trim(),
-        so = (j['Mots soninké'] ?? j['so'] ?? '').toString().trim(),
-        audioSo = (j['Audio_Soninké'] ?? j['audioSo'] ?? '').toString().trim(),
-        audioFr = (j['Audio_Français'] ?? j['audioFr'] ?? '').toString().trim(),
-        theme = (j['Thème'] ?? j['theme'] ?? '').toString().trim(),
-        phon = (j['phonetique micro'] ?? j['phon'] ?? '').toString().trim(),
-        exSo = (j['Exemple soninké'] ?? '').toString().trim(),
-        exFr = (j['Exemple français'] ?? '').toString().trim(),
-        keywords = (j['mots clés-recherche'] ?? '').toString().trim();
+      : fr = j['fr'] ?? '',
+        so = j['so'] ?? '',
+        audioSo = j['audioSo'] ?? '',
+        audioFr = j['audioFr'] ?? '',
+        theme = j['theme'] ?? '',
+        phon = j['phon'] ?? ''; // utilisé uniquement pour la recherche (jamais affiché)
   String get id => '$fr|$so';
 }
 
 class Phrase {
   final String fr, so;
   Phrase(Map<String, dynamic> j)
-      : fr = (j['Mots français'] ?? j['fr'] ?? '').toString().trim(),
-        so = (j['Mots soninké'] ?? j['so'] ?? '').toString().trim();
+      : fr = j['fr'] ?? '',
+        so = j['so'] ?? '';
   String get id => 'p:$fr|$so';
 }
 
@@ -40,39 +81,23 @@ String norm(String s) {
   }
   return r.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 }
+
 class AppState extends ChangeNotifier {
   List<Entry> words = [];
   List<Phrase> phrases = [];
   Set<String> favs = {};
-  String errorMsg = '';
   SharedPreferences? _p;
   final player = AudioPlayer();
 
   Future<void> load() async {
-    try {
-      final raw = await rootBundle.loadString('assets/data/data.json');
-      final j = jsonDecode(raw);
-      List rawList = [];
-      if (j is List) {
-        rawList = j;
-      } else if (j is Map) {
-        rawList = (j['words'] ?? []) as List;
-        phrases = ((j['phrases'] ?? []) as List).map((e) => Phrase(e)).toList();
-      }
-      words = rawList
-          .map((e) => Entry(e))
-          .where((w) => (w.fr.isNotEmpty && w.fr != '-') || (w.so.isNotEmpty && w.so != '-'))
-          .toList();
-      if (words.isEmpty) errorMsg = 'Fichier lu mais 0 mot trouvé. Début du fichier : ${raw.substring(0, raw.length > 80 ? 80 : raw.length)}';
-      _p = await SharedPreferences.getInstance();
-      favs = (_p!.getStringList('favs') ?? []).toSet();
-    } catch (e) {
-      errorMsg = 'Erreur de lecture : $e';
-    }
+    final raw = await rootBundle.loadString('assets/data/data.json');
+    final j = jsonDecode(raw);
+    words = (j['words'] as List).map((e) => Entry(e)).toList();
+    phrases = (j['phrases'] as List).map((e) => Phrase(e)).toList();
+    _p = await SharedPreferences.getInstance();
+    favs = (_p!.getStringList('favs') ?? []).toSet();
     notifyListeners();
   }
-
-
 
   void toggleFav(String id) {
     favs.contains(id) ? favs.remove(id) : favs.add(id);
@@ -90,26 +115,38 @@ class AppState extends ChangeNotifier {
 
   List<Entry> search(String q) {
     final n = norm(q);
-    if (n.isEmpty) return words;
-    return words.where((w) {
+    if (n.isEmpty) return [];
+    final res = words.where((w) {
       return norm(w.fr).contains(n) ||
           norm(w.so).contains(n) ||
-          norm(w.phon).contains(n) ||
-          norm(w.theme).contains(n) ||
-          norm(w.keywords).contains(n);
+          norm(w.phon).contains(n);
     }).toList();
+    int score(Entry w) {
+      if (norm(w.fr) == n || norm(w.so) == n) return 0;
+      if (norm(w.fr).startsWith(n) || norm(w.so).startsWith(n)) return 1;
+      return 2;
+    }
+
+    res.sort((a, b) => score(a).compareTo(score(b)));
+    return res;
   }
 }
 
 final state = AppState();
+final themeFilter = ValueNotifier<String?>(null);
 
+// ---------- Application ----------
 class SoninkeEchoApp extends StatelessWidget {
   const SoninkeEchoApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: "Sonink'Écho",
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: violet), useMaterial3: true),
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: violet),
+          scaffoldBackgroundColor: fond,
+          useMaterial3: true,
+        ),
         home: const Home(),
       );
 }
@@ -122,134 +159,376 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int tab = 0;
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    state.addListener(_rebuild);
     state.load();
-    state.addListener(() => mounted ? setState(() {}) : null);
+  }
+
+  @override
+  void dispose() {
+    state.removeListener(_rebuild);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final pages = [const SearchPage(), const DictPage(), const PhrasesPage(), const FavsPage()];
+    final pages = <Widget>[
+      SearchPage(onTheme: (t) {
+        themeFilter.value = t;
+        setState(() => tab = 1);
+      }),
+      const DictPage(),
+      const PhrasesPage(),
+      const FavsPage(),
+    ];
     return Scaffold(
-      appBar: AppBar(title: const Text("Sonink'Écho")),
-      body: pages[tab],
+      body: state.words.isEmpty
+          ? const Center(child: CircularProgressIndicator(color: violet))
+          : pages[tab],
       bottomNavigationBar: NavigationBar(
+        backgroundColor: Colors.white,
+        indicatorColor: violet.withValues(alpha: 0.18),
         selectedIndex: tab,
         onDestinationSelected: (i) => setState(() => tab = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.search), label: 'Traduire'),
-          NavigationDestination(icon: Icon(Icons.menu_book), label: 'Dictionnaire'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: 'Phrases'),
-          NavigationDestination(icon: Icon(Icons.star_border), label: 'Favoris'),
+          NavigationDestination(
+              icon: Icon(Icons.translate), selectedIcon: Icon(Icons.translate, color: violet), label: 'Traduire'),
+          NavigationDestination(
+              icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book, color: orange), label: 'Dictionnaire'),
+          NavigationDestination(
+              icon: Icon(Icons.chat_bubble_outline), selectedIcon: Icon(Icons.chat_bubble, color: turquoise), label: 'Phrases'),
+          NavigationDestination(
+              icon: Icon(Icons.star_border), selectedIcon: Icon(Icons.star, color: Colors.amber), label: 'Favoris'),
         ],
       ),
     );
   }
 }
-class WordTile extends StatelessWidget {
-  final Entry e;
-  const WordTile(this.e, {super.key});
+
+// ---------- Composants ----------
+class GradientHeader extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final Widget? child;
+  const GradientHeader({super.key, required this.title, this.subtitle, this.child});
+
   @override
   Widget build(BuildContext context) {
-    final fav = state.favs.contains(e.id);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(e.so, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                  if (e.phon.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text('[${e.phon}]', style: const TextStyle(fontStyle: FontStyle.italic, color: violet, fontSize: 14)),
-                  ],
-                  const SizedBox(height: 4),
-                  Text(e.fr, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                  if (e.exSo.isNotEmpty || e.exFr.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (e.exSo.isNotEmpty) Text('« ${e.exSo} »', style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 13)),
-                          if (e.exFr.isNotEmpty) Text(e.exFr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (e.theme.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(color: violet.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                      child: Text(e.theme, style: const TextStyle(fontSize: 11, color: violet, fontWeight: FontWeight.w600)),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              if (e.audioFr.isNotEmpty) IconButton(icon: const Icon(Icons.volume_up, color: Colors.blue), onPressed: () => state.play(e.audioFr)),
-              if (e.audioSo.isNotEmpty) IconButton(icon: const Icon(Icons.volume_up, color: Colors.green), onPressed: () => state.play(e.audioSo)),
-              IconButton(icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber), onPressed: () => state.toggleFav(e.id)),
-            ]),
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(20, MediaQuery.of(context).padding.top + 16, 20, 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [violet, Color(0xFFAB47BC), Color(0xFFFF7043)],
+        ),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.graphic_eq, color: Colors.white, size: 28),
+            const SizedBox(width: 8),
+            Text(title,
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+          ]),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(subtitle!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
           ],
+          if (child != null) ...[const SizedBox(height: 14), child!],
+        ],
+      ),
+    );
+  }
+}
+
+class SearchField extends StatelessWidget {
+  final String hint;
+  final ValueChanged<String> onChanged;
+  const SearchField({super.key, required this.hint, required this.onChanged});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 10, offset: const Offset(0, 4))
+        ],
+      ),
+      child: TextField(
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.search, color: violet),
+          hintText: hint,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
   }
 }
 
+class AudioBtn extends StatelessWidget {
+  final String label, url;
+  final Color color;
+  const AudioBtn({super.key, required this.label, required this.url, required this.color});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => state.play(url),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.volume_up_rounded, color: color, size: 20),
+            const SizedBox(width: 3),
+            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class FavBtn extends StatelessWidget {
+  final String id;
+  const FavBtn(this.id, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    final fav = state.favs.contains(id);
+    return IconButton(
+      icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded,
+          color: Colors.amber, size: 28),
+      onPressed: () => state.toggleFav(id),
+    );
+  }
+}
+
+class CardShell extends StatelessWidget {
+  final Color color;
+  final Widget child;
+  const CardShell({super.key, required this.color, required this.child});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.2), blurRadius: 12, offset: const Offset(0, 4))
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Container(width: 7, color: color),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+                child: child,
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class WordTile extends StatelessWidget {
+  final Entry e;
+  const WordTile(this.e, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    final c = themeColor(e.theme);
+    return CardShell(
+      color: c,
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(e.so,
+                style: const TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w800, color: violet)),
+            const SizedBox(height: 2),
+            Text(e.fr, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+            if (e.theme.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: c.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+                child: Text(cap(e.theme),
+                    style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ]),
+        ),
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            if (e.audioFr.isNotEmpty)
+              AudioBtn(label: 'FR', url: e.audioFr, color: const Color(0xFF2979FF)),
+            if (e.audioSo.isNotEmpty)
+              AudioBtn(label: 'SO', url: e.audioSo, color: const Color(0xFF00A86B)),
+          ]),
+          FavBtn(e.id),
+        ]),
+      ]),
+    );
+  }
+}
+
+class PhraseTile extends StatelessWidget {
+  final Phrase p;
+  final int i;
+  const PhraseTile(this.p, this.i, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    final c = palette[i % palette.length];
+    return CardShell(
+      color: c,
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(p.so,
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: c)),
+            const SizedBox(height: 4),
+            Text(p.fr, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+          ]),
+        ),
+        FavBtn(p.id),
+      ]),
+    );
+  }
+}
+
+// ---------- Page Traduire ----------
 class SearchPage extends StatefulWidget {
-  const SearchPage({super.key});
+  final ValueChanged<String?> onTheme;
+  const SearchPage({super.key, required this.onTheme});
   @override
   State<SearchPage> createState() => _SearchPageState();
 }
 
 class _SearchPageState extends State<SearchPage> {
   String q = '';
-  final _ctrl = TextEditingController();
-  @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+
   @override
   Widget build(BuildContext context) {
     final res = state.search(q);
+    final themes = state.words.map((w) => w.theme).where((t) => t.isNotEmpty).toSet().toList()..sort();
+    final wod = state.words.isEmpty
+        ? null
+        : state.words[DateTime.now().day % state.words.length];
+
     return Column(children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-        child: TextField(
-          controller: _ctrl,
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: q.isNotEmpty ? IconButton(icon: const Icon(Icons.clear), onPressed: () { _ctrl.clear(); setState(() => q = ''); }) : null,
-            hintText: 'Filtrer parmi ${state.words.length} mots…',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          onChanged: (v) => setState(() => q = v),
-        ),
+      GradientHeader(
+        title: "Sonink'Écho",
+        subtitle: 'Votre traducteur français ⇄ soninké',
+        child: SearchField(
+            hint: 'Taper un mot en français ou en soninké…',
+            onChanged: (v) => setState(() => q = v)),
       ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text(q.isEmpty ? 'Tous les mots (${res.length})' : '${res.length} résultat(s)', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
-        ),
+      Expanded(
+        child: q.isNotEmpty
+            ? (res.isEmpty
+                ? const Center(child: Text('Aucun résultat 🤔'))
+                : ListView(padding: const EdgeInsets.only(top: 10), children: [for (final e in res) WordTile(e)]))
+            : ListView(padding: const EdgeInsets.all(16), children: [
+                Row(children: [
+                  Expanded(
+                      child: _Stat('${state.words.length}', 'Mots', turquoise, Icons.abc)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: _Stat('${state.phrases.length}', 'Phrases', orange, Icons.chat)),
+                ]),
+                const SizedBox(height: 20),
+                if (wod != null) ...[
+                  const Text('✨ Mot du jour',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Transform.translate(
+                      offset: const Offset(-16, 0),
+                      child: SizedBox(
+                          width: MediaQuery.of(context).size.width, child: WordTile(wod))),
+                ],
+                const SizedBox(height: 12),
+                const Text('Parcourir par thème',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                Wrap(spacing: 10, runSpacing: 10, children: [
+                  for (final t in themes)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => widget.onTheme(t),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: themeColor(t),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(themeIcon(t), color: Colors.white, size: 18),
+                          const SizedBox(width: 6),
+                          Text(cap(t),
+                              style: const TextStyle(
+                                  color: Colors.white, fontWeight: FontWeight.w700)),
+                        ]),
+                      ),
+                    ),
+                ]),
+              ]),
       ),
-      Expanded(child: res.isEmpty ? Center(child: Padding(padding: const EdgeInsets.all(16), child: Text(state.errorMsg.isNotEmpty ? state.errorMsg : 'Aucun mot trouvé', style: const TextStyle(color: Colors.red))))
- : ListView.builder(itemCount: res.length, itemBuilder: (_, i) => WordTile(res[i]))),
     ]);
   }
 }
 
+class _Stat extends StatelessWidget {
+  final String n, label;
+  final Color color;
+  final IconData icon;
+  const _Stat(this.n, this.label, this.color, this.icon);
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [color, color.withValues(alpha: 0.7)]),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(children: [
+        Icon(icon, color: Colors.white, size: 34),
+        const SizedBox(width: 10),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(n,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
+          Text(label, style: const TextStyle(color: Colors.white, fontSize: 13)),
+        ]),
+      ]),
+    );
+  }
+}
+
+// ---------- Page Dictionnaire ----------
 class DictPage extends StatefulWidget {
   const DictPage({super.key});
   @override
@@ -258,33 +537,139 @@ class DictPage extends StatefulWidget {
 
 class _DictPageState extends State<DictPage> {
   bool frToSo = true;
-  String? theme;
+  String q = '';
+
+  void _r() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    themeFilter.addListener(_r);
+  }
+
+  @override
+  void dispose() {
+    themeFilter.removeListener(_r);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = themeFilter.value;
     final themes = state.words.map((w) => w.theme).where((t) => t.isNotEmpty).toSet().toList()..sort();
-    var list = state.words.where((w) => theme == null || w.theme == theme).toList();
+    final n = norm(q);
+    var list = state.words.where((w) {
+      if (theme != null && w.theme != theme) return false;
+      if (n.isEmpty) return true;
+      return norm(w.fr).contains(n) || norm(w.so).contains(n) || norm(w.phon).contains(n);
+    }).toList();
     list.sort((a, b) => norm(frToSo ? a.fr : a.so).compareTo(norm(frToSo ? b.fr : b.so)));
+
     return Column(children: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: SegmentedButton<bool>(
-          segments: const [ButtonSegment(value: true, label: Text('Français → Soninké')), ButtonSegment(value: false, label: Text('Soninké → Français'))],
-          selected: {frToSo},
-          onSelectionChanged: (s) => setState(() => frToSo = s.first),
-        ),
-      ),
-      SizedBox(
-        height: 48,
-        child: ListView(scrollDirection: Axis.horizontal, children: [
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: ChoiceChip(label: const Text('Tous'), selected: theme == null, onSelected: (_) => setState(() => theme = null))),
-          for (final t in themes) Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: ChoiceChip(label: Text(t), selected: theme == t, onSelected: (_) => setState(() => theme = t))),
+      GradientHeader(
+        title: 'Dictionnaire',
+        subtitle: frToSo ? 'Français → Soninké' : 'Soninké → Français',
+        child: Column(children: [
+          SearchField(hint: 'Rechercher un mot…', onChanged: (v) => setState(() => q = v)),
+          const SizedBox(height: 10),
+          Row(children: [
+            _Toggle('Français → Soninké', frToSo, () => setState(() => frToSo = true)),
+            const SizedBox(width: 8),
+            _Toggle('Soninké → Français', !frToSo, () => setState(() => frToSo = false)),
+          ]),
         ]),
       ),
-      Expanded(child: ListView.builder(itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i]))),
+      SizedBox(
+        height: 56,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          children: [
+            _Chip('Tous', null, theme == null, violet, () => themeFilter.value = null),
+            for (final t in themes)
+              _Chip(cap(t), themeIcon(t), theme == t, themeColor(t), () => themeFilter.value = t),
+          ],
+        ),
+      ),
+      Expanded(
+        child: list.isEmpty
+            ? const Center(child: Text('Aucun mot trouvé'))
+            : ListView.builder(
+                itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i])),
+      ),
     ]);
   }
 }
 
+class _Toggle extends StatelessWidget {
+  final String label;
+  final bool on;
+  final VoidCallback tap;
+  const _Toggle(this.label, this.on, this.tap);
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: tap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on ? Colors.white : Colors.white.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  color: on ? violet : Colors.white)),
+        ),
+      ),
+    );
+  }
+}
+
+class _Chip extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final bool on;
+  final Color color;
+  final VoidCallback tap;
+  const _Chip(this.label, this.icon, this.on, this.color, this.tap);
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: tap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on ? color : Colors.white,
+            border: Border.all(color: color, width: 1.5),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(children: [
+            if (icon != null) ...[
+              Icon(icon, size: 16, color: on ? Colors.white : color),
+              const SizedBox(width: 5),
+            ],
+            Text(label,
+                style: TextStyle(
+                    fontWeight: FontWeight.w700, color: on ? Colors.white : color)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------- Page Phrases ----------
 class PhrasesPage extends StatefulWidget {
   const PhrasesPage({super.key});
   @override
@@ -296,52 +681,49 @@ class _PhrasesPageState extends State<PhrasesPage> {
   @override
   Widget build(BuildContext context) {
     final n = norm(q);
-    final list = state.phrases.where((p) => n.isEmpty || norm(p.fr).contains(n) || norm(p.so).contains(n)).toList();
+    final list = state.phrases
+        .where((p) => n.isEmpty || norm(p.fr).contains(n) || norm(p.so).contains(n))
+        .toList();
     return Column(children: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: TextField(
-          decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: 'Rechercher une phrase…', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
-          onChanged: (v) => setState(() => q = v),
-        ),
+      GradientHeader(
+        title: 'Phrases utiles',
+        subtitle: '${state.phrases.length} phrases du quotidien',
+        child: SearchField(hint: 'Rechercher une phrase…', onChanged: (v) => setState(() => q = v)),
       ),
       Expanded(
         child: ListView.builder(
+          padding: const EdgeInsets.only(top: 10, bottom: 10),
           itemCount: list.length,
-          itemBuilder: (_, i) {
-            final p = list[i];
-            final fav = state.favs.contains(p.id);
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: ListTile(
-                title: Text(p.fr),
-                subtitle: Text(p.so, style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
-                trailing: IconButton(icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber), onPressed: () => state.toggleFav(p.id)),
-              ),
-            );
-          },
+          itemBuilder: (_, i) => PhraseTile(list[i], i),
         ),
       ),
     ]);
   }
 }
 
+// ---------- Page Favoris ----------
 class FavsPage extends StatelessWidget {
   const FavsPage({super.key});
   @override
   Widget build(BuildContext context) {
     final ws = state.words.where((w) => state.favs.contains(w.id)).toList();
     final ps = state.phrases.where((p) => state.favs.contains(p.id)).toList();
-    if (ws.isEmpty && ps.isEmpty) return const Center(child: Text("Aucun favori pour l'instant ⭐"));
-    return ListView(children: [
-      for (final w in ws) WordTile(w),
-      for (final p in ps) Card(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: ListTile(
-          title: Text(p.fr),
-          subtitle: Text(p.so, style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
-          trailing: IconButton(icon: const Icon(Icons.star, color: Colors.amber), onPressed: () => state.toggleFav(p.id)),
-        ),
+    return Column(children: [
+      const GradientHeader(title: 'Mes favoris', subtitle: 'Vos mots et phrases préférés ⭐'),
+      Expanded(
+        child: (ws.isEmpty && ps.isEmpty)
+            ? const Center(
+                child: Padding(
+                padding: EdgeInsets.all(30),
+                child: Text(
+                    "Aucun favori pour l'instant.\nAppuyez sur ⭐ à côté d'un mot pour l'ajouter.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 16)),
+              ))
+            : ListView(padding: const EdgeInsets.only(top: 10), children: [
+                for (final w in ws) WordTile(w),
+                for (var i = 0; i < ps.length; i++) PhraseTile(ps[i], i),
+              ]),
       ),
     ]);
   }
