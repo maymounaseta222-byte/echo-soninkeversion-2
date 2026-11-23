@@ -1,0 +1,28 @@
+name: Build Android
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Generer le projet Android
+        run: flutter create . --platforms=android --org com.soninke --project-name soninke_echo
+      - name: Autoriser internet
+        run: |
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|&\n    <uses-permission android:name="android.permission.INTERNET"/>|' android/app/src/main/AndroidManifest.xml
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soninke-echo-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

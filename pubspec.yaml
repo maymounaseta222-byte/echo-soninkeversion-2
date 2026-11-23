@@ -1,0 +1,19 @@
+name: soninke_echo
+description: Traducteur français - soninké
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  csv: ^6.0.0
+  just_audio: ^0.9.40
+  shared_preferences: ^2.3.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/data/
