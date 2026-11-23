@@ -71,11 +71,13 @@ class AppState extends ChangeNotifier {
 
   List<Entry> search(String q) {
     final n = norm(q);
-    if (n.isEmpty) return [];
+    // MODIFICATION : Si la recherche est vide, on affiche tous les mots au lieu d'une liste vide
+    if (n.isEmpty) return words;
     return words.where((w) {
       return norm(w.fr).contains(n) ||
           norm(w.so).contains(n) ||
-          norm(w.phon).contains(n);
+          norm(w.phon).contains(n) ||
+          norm(w.theme).contains(n);
     }).toList();
   }
 }
@@ -141,25 +143,73 @@ class WordTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final fav = state.favs.contains(e.id);
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: ListTile(
-        title: Text(e.so, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        subtitle: Text(e.fr),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (e.audioFr.isNotEmpty)
-            IconButton(
-                tooltip: 'Écouter en français',
-                icon: const Icon(Icons.volume_up, color: Colors.blue),
-                onPressed: () => state.play(e.audioFr)),
-          if (e.audioSo.isNotEmpty)
-            IconButton(
-                tooltip: 'Écouter en soninké',
-                icon: const Icon(Icons.volume_up, color: Colors.green),
-                onPressed: () => state.play(e.audioSo)),
-          IconButton(
-              icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber),
-              onPressed: () => state.toggleFav(e.id)),
-        ]),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    e.so,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                  ),
+                  if (e.phon.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '[${e.phon}]',
+                      style: const TextStyle(
+                        fontStyle: FontStyle.italic,
+                        color: violet,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  Text(
+                    e.fr,
+                    style: const TextStyle(fontSize: 15),
+                  ),
+                  if (e.theme.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: violet.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        e.theme,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: violet,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              if (e.audioFr.isNotEmpty)
+                IconButton(
+                    tooltip: 'Écouter en français',
+                    icon: const Icon(Icons.volume_up, color: Colors.blue),
+                    onPressed: () => state.play(e.audioFr)),
+              if (e.audioSo.isNotEmpty)
+                IconButton(
+                    tooltip: 'Écouter en soninké',
+                    icon: const Icon(Icons.volume_up, color: Colors.green),
+                    onPressed: () => state.play(e.audioSo)),
+              IconButton(
+                  icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber),
+                  onPressed: () => state.toggleFav(e.id)),
+            ]),
+          ],
+        ),
       ),
     );
   }
@@ -173,29 +223,59 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   String q = '';
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final res = state.search(q);
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
         child: TextField(
+          controller: _ctrl,
           decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: 'Taper un mot en français ou en soninké…',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: q.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      _ctrl.clear();
+                      setState(() => q = '');
+                    },
+                  )
+                : null,
+            hintText: 'Filtrer parmi ${state.words.length} mots…',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
           onChanged: (v) => setState(() => q = v),
         ),
       ),
-      if (q.isEmpty)
-        Padding(
-          padding: const EdgeInsets.all(24),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: Align(
+          alignment: Alignment.centerLeft,
           child: Text(
-              '${state.words.length} mots • ${state.phrases.length} phrases utiles',
-              style: Theme.of(context).textTheme.titleMedium),
+            q.isEmpty
+                ? 'Tous les mots (${res.length}) • ${state.phrases.length} phrases'
+                : '${res.length} résultat(s) trouvé(s)',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+          ),
         ),
+      ),
       Expanded(
-          child: ListView(children: [for (final e in res) WordTile(e)])),
+        child: res.isEmpty
+            ? const Center(child: Text('Aucun mot trouvé'))
+            : ListView.builder(
+                itemCount: res.length,
+                itemBuilder: (_, i) => WordTile(res[i]),
+              ),
+      ),
     ]);
   }
 }
@@ -230,100 +310,3 @@ class _DictPageState extends State<DictPage> {
         height: 48,
         child: ListView(scrollDirection: Axis.horizontal, children: [
           Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: ChoiceChip(
-                  label: const Text('Tous'),
-                  selected: theme == null,
-                  onSelected: (_) => setState(() => theme = null))),
-          for (final t in themes)
-            Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: ChoiceChip(
-                    label: Text(t),
-                    selected: theme == t,
-                    onSelected: (_) => setState(() => theme = t))),
-        ]),
-      ),
-      Expanded(
-        child: ListView.builder(
-            itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i])),
-      ),
-    ]);
-  }
-}
-
-class PhrasesPage extends StatefulWidget {
-  const PhrasesPage({super.key});
-  @override
-  State<PhrasesPage> createState() => _PhrasesPageState();
-}
-
-class _PhrasesPageState extends State<PhrasesPage> {
-  String q = '';
-  @override
-  Widget build(BuildContext context) {
-    final n = norm(q);
-    final list = state.phrases
-        .where((p) => n.isEmpty || norm(p.fr).contains(n) || norm(p.so).contains(n))
-        .toList();
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: TextField(
-          decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: 'Rechercher une phrase…',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
-          onChanged: (v) => setState(() => q = v),
-        ),
-      ),
-      Expanded(
-        child: ListView.builder(
-          itemCount: list.length,
-          itemBuilder: (_, i) {
-            final p = list[i];
-            final fav = state.favs.contains(p.id);
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: ListTile(
-                title: Text(p.fr),
-                subtitle: Text(p.so,
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
-                trailing: IconButton(
-                    icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber),
-                    onPressed: () => state.toggleFav(p.id)),
-              ),
-            );
-          },
-        ),
-      ),
-    ]);
-  }
-}
-
-class FavsPage extends StatelessWidget {
-  const FavsPage({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final ws = state.words.where((w) => state.favs.contains(w.id)).toList();
-    final ps = state.phrases.where((p) => state.favs.contains(p.id)).toList();
-    if (ws.isEmpty && ps.isEmpty) {
-      return const Center(child: Text("Aucun favori pour l'instant ⭐"));
-    }
-    return ListView(children: [
-      for (final w in ws) WordTile(w),
-      for (final p in ps)
-        Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: ListTile(
-            title: Text(p.fr),
-            subtitle: Text(p.so,
-                style: const TextStyle(fontWeight: FontWeight.bold, color: violet)),
-            trailing: IconButton(
-                icon: const Icon(Icons.star, color: Colors.amber),
-                onPressed: () => state.toggleFav(p.id)),
-          ),
-        ),
-    ]);
-  }
-}
