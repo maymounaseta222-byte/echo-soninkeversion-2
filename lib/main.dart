@@ -3,51 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 void main() => runApp(const SoninkeEchoApp());
 
 // ---------- Couleurs ----------
 const violet = Color(0xFF6A3DE8);
-const rose = Color(0xFFE040FB);
 const orange = Color(0xFFFF7A00);
-const turquoise = Color(0xFF00B8A9);
+const turquoise = Color(0xFF00A79D);
 const fond = Color(0xFFF5F2FF);
 
-const palette = [
-  Color(0xFF7C4DFF),
-  Color(0xFFFF6D00),
-  Color(0xFF00BFA5),
-  Color(0xFFE91E63),
-  Color(0xFF2979FF),
-  Color(0xFFFFAB00),
-  Color(0xFF43A047),
-  Color(0xFFD500F9),
-];
-
-Color themeColor(String t) {
-  if (t.isEmpty) return violet;
-  var s = 0;
-  for (final c in t.codeUnits) {
-    s += c;
-  }
-  return palette[s % palette.length];
-}
-
-IconData themeIcon(String t) {
-  final x = t.toLowerCase();
-  if (x.contains('animaux')) return Icons.pets;
-  if (x.contains('corps')) return Icons.accessibility_new;
-  if (x.contains('cole')) return Icons.school;
-  if (x.contains('famille')) return Icons.family_restroom;
-  if (x.contains('salut')) return Icons.waving_hand;
-  if (x.contains('aliment') || x.contains('cuisine')) return Icons.restaurant;
-  if (x.contains('couleur')) return Icons.palette;
-  if (x.contains('question')) return Icons.help_outline;
-  if (x.contains('politesse')) return Icons.favorite;
-  if (x.contains('quotidien')) return Icons.wb_sunny;
-  if (x.contains('logement')) return Icons.home;
-  return Icons.label;
-}
+const degrade = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [violet, Color(0xFFAB47BC), Color(0xFFFF7043)],
+);
 
 String cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
@@ -93,28 +63,63 @@ String norm(String s) {
   return r.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
+String flat(String s) => norm(s).replaceAll(' ', '');
+
+int lev(String a, String b) {
+  if (a == b) return 0;
+  if (a.isEmpty) return b.length;
+  if (b.isEmpty) return a.length;
+  var prev = List<int>.generate(b.length + 1, (i) => i);
+  for (var i = 1; i <= a.length; i++) {
+    final cur = List<int>.filled(b.length + 1, 0);
+    cur[0] = i;
+    for (var j = 1; j <= b.length; j++) {
+      final c = a[i - 1] == b[j - 1] ? 0 : 1;
+      var m = prev[j] + 1;
+      if (cur[j - 1] + 1 < m) m = cur[j - 1] + 1;
+      if (prev[j - 1] + c < m) m = prev[j - 1] + c;
+      cur[j] = m;
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 class AppState extends ChangeNotifier {
   List<Entry> words = [];
   List<Phrase> phrases = [];
   Set<String> favs = {};
   SharedPreferences? _p;
   final player = AudioPlayer();
+  bool loaded = false;
+  String? error;
 
   Future<void> load() async {
-    final raw = await rootBundle.loadString('assets/data/data.json');
-    final j = jsonDecode(raw);
-    final List wl = j is List ? j : (j['words'] ?? j['mots'] ?? []);
-    final List pl = j is List ? [] : (j['phrases'] ?? []);
-    words = wl
-        .map((e) => Entry(Map<String, dynamic>.from(e)))
-        .where((e) => e.fr.isNotEmpty && e.so.isNotEmpty)
-        .toList();
-    phrases = pl
-        .map((e) => Phrase(Map<String, dynamic>.from(e)))
-        .where((e) => e.fr.isNotEmpty && e.so.isNotEmpty)
-        .toList();
-    _p = await SharedPreferences.getInstance();
-    favs = (_p!.getStringList('favs') ?? []).toSet();
+    try {
+      final raw = await rootBundle.loadString('assets/data/data.json');
+      final j = jsonDecode(raw);
+      final List wl = j is List ? j : (j['words'] ?? j['mots'] ?? []);
+      final List pl = j is List ? [] : (j['phrases'] ?? []);
+      words = wl
+          .map((e) => Entry(Map<String, dynamic>.from(e)))
+          .where((e) => e.fr.isNotEmpty && e.so.isNotEmpty)
+          .toList();
+      phrases = pl
+          .map((e) => Phrase(Map<String, dynamic>.from(e)))
+          .where((e) => e.fr.isNotEmpty && e.so.isNotEmpty)
+          .toList();
+      if (words.isEmpty) {
+        error = "Le fichier data.json a été lu, mais aucun mot n'a été trouvé "
+            "(vérifiez les noms de colonnes).";
+      }
+    } catch (e) {
+      error = 'Impossible de lire assets/data/data.json : $e';
+    }
+    try {
+      _p = await SharedPreferences.getInstance();
+      favs = (_p!.getStringList('favs') ?? []).toSet();
+    } catch (_) {}
+    loaded = true;
     notifyListeners();
   }
 
@@ -132,6 +137,47 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
+  // Score de ressemblance (le plus petit = le mieux). Sert surtout à la recherche vocale :
+  // la reconnaissance entend des mots français, on les compare à la colonne "phonétique micro".
+  int? fuzzyScore(Entry w, String q) {
+    final n = flat(q);
+    if (n.length < 2) return null;
+    final cands = <String>[flat(w.fr), flat(w.so)];
+    for (final p in w.phon.split(',')) {
+      cands.add(flat(p));
+    }
+    final tol = n.length <= 4 ? 1 : 2;
+    int? best;
+    for (final c in cands) {
+      if (c.isEmpty) continue;
+      int s;
+      if (c == n) {
+        s = 0;
+      } else if (c.length >= 3 && (c.contains(n) || n.contains(c))) {
+        s = 1;
+      } else {
+        final d = lev(c, n);
+        if (d <= tol) {
+          s = 1 + d;
+        } else {
+          continue;
+        }
+      }
+      if (best == null || s < best) best = s;
+    }
+    return best;
+  }
+
+  List<Entry> fuzzy(Iterable<Entry> src, String q) {
+    final scored = <MapEntry<Entry, int>>[];
+    for (final w in src) {
+      final s = fuzzyScore(w, q);
+      if (s != null) scored.add(MapEntry(w, s));
+    }
+    scored.sort((a, b) => a.value.compareTo(b.value));
+    return scored.map((e) => e.key).toList();
+  }
+
   List<Entry> search(String q) {
     final n = norm(q);
     if (n.isEmpty) return [];
@@ -140,6 +186,7 @@ class AppState extends ChangeNotifier {
           norm(w.so).contains(n) ||
           norm(w.phon).contains(n);
     }).toList();
+    if (res.isEmpty) return fuzzy(words, q);
     int score(Entry w) {
       if (norm(w.fr) == n || norm(w.so) == n) return 0;
       if (norm(w.fr).startsWith(n) || norm(w.so).startsWith(n)) return 1;
@@ -198,33 +245,56 @@ class _HomeState extends State<Home> {
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      SearchPage(onTheme: (t) {
-        themeFilter.value = t;
-        setState(() => tab = 1);
-      }),
+      const SearchPage(),
       const DictPage(),
       const PhrasesPage(),
       const FavsPage(),
     ];
     return Scaffold(
-      body: state.words.isEmpty
+      body: !state.loaded
           ? const Center(child: CircularProgressIndicator(color: violet))
-          : pages[tab],
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: Colors.white,
-        indicatorColor: violet.withValues(alpha: 0.18),
-        selectedIndex: tab,
-        onDestinationSelected: (i) => setState(() => tab = i),
-        destinations: const [
-          NavigationDestination(
-              icon: Icon(Icons.translate), selectedIcon: Icon(Icons.translate, color: violet), label: 'Traduire'),
-          NavigationDestination(
-              icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book, color: orange), label: 'Dictionnaire'),
-          NavigationDestination(
-              icon: Icon(Icons.chat_bubble_outline), selectedIcon: Icon(Icons.chat_bubble, color: turquoise), label: 'Phrases'),
-          NavigationDestination(
-              icon: Icon(Icons.star_border), selectedIcon: Icon(Icons.star, color: Colors.amber), label: 'Favoris'),
-        ],
+          : (state.words.isEmpty
+              ? Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(state.error ?? 'Aucun mot à afficher.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 16, color: Colors.red))))
+              : pages[tab]),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(gradient: degrade),
+        child: NavigationBarTheme(
+          data: NavigationBarThemeData(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            indicatorColor: Colors.white.withValues(alpha: 0.28),
+            labelTextStyle: const WidgetStatePropertyAll(
+                TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+          child: NavigationBar(
+            selectedIndex: tab,
+            onDestinationSelected: (i) => setState(() => tab = i),
+            destinations: const [
+              NavigationDestination(
+                  icon: Icon(Icons.translate, color: Colors.white70),
+                  selectedIcon: Icon(Icons.translate, color: Colors.white),
+                  label: 'Traduire'),
+              NavigationDestination(
+                  icon: Icon(Icons.menu_book_outlined, color: Colors.white70),
+                  selectedIcon: Icon(Icons.menu_book, color: Colors.white),
+                  label: 'Dictionnaire'),
+              NavigationDestination(
+                  icon: Icon(Icons.chat_bubble_outline, color: Colors.white70),
+                  selectedIcon: Icon(Icons.chat_bubble, color: Colors.white),
+                  label: 'Phrases'),
+              NavigationDestination(
+                  icon: Icon(Icons.star_border, color: Colors.white70),
+                  selectedIcon: Icon(Icons.star, color: Colors.white),
+                  label: 'Favoris'),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -243,11 +313,7 @@ class GradientHeader extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(20, MediaQuery.of(context).padding.top + 16, 20, 20),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [violet, Color(0xFFAB47BC), Color(0xFFFF7043)],
-        ),
+        gradient: degrade,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
       ),
       child: Column(
@@ -271,10 +337,79 @@ class GradientHeader extends StatelessWidget {
   }
 }
 
-class SearchField extends StatelessWidget {
+// Barre de recherche avec micro (recherche vocale)
+class SearchField extends StatefulWidget {
   final String hint;
   final ValueChanged<String> onChanged;
   const SearchField({super.key, required this.hint, required this.onChanged});
+  @override
+  State<SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<SearchField> {
+  final ctrl = TextEditingController();
+  final stt = SpeechToText();
+  bool ready = false;
+  bool listening = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ctrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    stt.cancel();
+    ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> toggleMic() async {
+    if (listening) {
+      await stt.stop();
+      if (mounted) setState(() => listening = false);
+      return;
+    }
+    if (!ready) {
+      try {
+        ready = await stt.initialize(
+          onStatus: (s) {
+            if ((s == 'done' || s == 'notListening') && mounted) {
+              setState(() => listening = false);
+            }
+          },
+          onError: (e) {
+            if (mounted) setState(() => listening = false);
+          },
+        );
+      } catch (_) {
+        ready = false;
+      }
+    }
+    if (!ready) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Micro indisponible : autorisez le micro et la reconnaissance vocale dans les réglages du téléphone.')));
+      }
+      return;
+    }
+    setState(() => listening = true);
+    await stt.listen(
+      localeId: 'fr_FR',
+      listenFor: const Duration(seconds: 8),
+      pauseFor: const Duration(seconds: 3),
+      onResult: (r) {
+        ctrl.text = r.recognizedWords;
+        ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
+        widget.onChanged(r.recognizedWords);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -286,12 +421,29 @@ class SearchField extends StatelessWidget {
         ],
       ),
       child: TextField(
-        onChanged: onChanged,
+        controller: ctrl,
+        onChanged: widget.onChanged,
         decoration: InputDecoration(
           prefixIcon: const Icon(Icons.search, color: violet),
-          hintText: hint,
+          hintText: listening ? 'Je vous écoute… parlez maintenant 🎤' : widget.hint,
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(vertical: 14),
+          suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (ctrl.text.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.grey),
+                onPressed: () {
+                  ctrl.clear();
+                  widget.onChanged('');
+                },
+              ),
+            IconButton(
+              tooltip: 'Recherche vocale',
+              icon: Icon(listening ? Icons.mic : Icons.mic_none,
+                  color: listening ? Colors.red : violet, size: 26),
+              onPressed: toggleMic,
+            ),
+          ]),
         ),
       ),
     );
@@ -352,7 +504,7 @@ class CardShell extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.2), blurRadius: 12, offset: const Offset(0, 4))
+          BoxShadow(color: color.withValues(alpha: 0.16), blurRadius: 12, offset: const Offset(0, 4))
         ],
       ),
       child: ClipRRect(
@@ -378,9 +530,8 @@ class WordTile extends StatelessWidget {
   const WordTile(this.e, {super.key});
   @override
   Widget build(BuildContext context) {
-    final c = themeColor(e.theme);
     return CardShell(
-      color: c,
+      color: violet,
       child: Row(children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -394,9 +545,10 @@ class WordTile extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                    color: c.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+                    color: const Color(0xFFEFEAFB), borderRadius: BorderRadius.circular(10)),
                 child: Text(cap(e.theme),
-                    style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w600)),
+                    style: const TextStyle(
+                        color: Color(0xFF6B5E8F), fontSize: 11, fontWeight: FontWeight.w600)),
               ),
             ],
           ]),
@@ -417,18 +569,17 @@ class WordTile extends StatelessWidget {
 
 class PhraseTile extends StatelessWidget {
   final Phrase p;
-  final int i;
-  const PhraseTile(this.p, this.i, {super.key});
+  const PhraseTile(this.p, {super.key});
   @override
   Widget build(BuildContext context) {
-    final c = palette[i % palette.length];
     return CardShell(
-      color: c,
+      color: turquoise,
       child: Row(children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(p.so,
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: c)),
+                style: const TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w800, color: turquoise)),
             const SizedBox(height: 4),
             Text(p.fr, style: const TextStyle(fontSize: 15, color: Colors.black87)),
           ]),
@@ -441,8 +592,7 @@ class PhraseTile extends StatelessWidget {
 
 // ---------- Page Traduire ----------
 class SearchPage extends StatefulWidget {
-  final ValueChanged<String?> onTheme;
-  const SearchPage({super.key, required this.onTheme});
+  const SearchPage({super.key});
   @override
   State<SearchPage> createState() => _SearchPageState();
 }
@@ -453,7 +603,6 @@ class _SearchPageState extends State<SearchPage> {
   @override
   Widget build(BuildContext context) {
     final res = state.search(q);
-    final themes = state.words.map((w) => w.theme).where((t) => t.isNotEmpty).toSet().toList()..sort();
     final wod = state.words.isEmpty
         ? null
         : state.words[DateTime.now().day % state.words.length];
@@ -463,85 +612,64 @@ class _SearchPageState extends State<SearchPage> {
         title: "Sonink'Écho",
         subtitle: 'Votre traducteur français ⇄ soninké',
         child: SearchField(
-            hint: 'Taper un mot en français ou en soninké…',
-            onChanged: (v) => setState(() => q = v)),
+            hint: 'Écrire ou dire un mot…', onChanged: (v) => setState(() => q = v)),
       ),
       Expanded(
-        child: q.isNotEmpty
+        child: q.trim().isNotEmpty
             ? (res.isEmpty
                 ? const Center(child: Text('Aucun résultat 🤔'))
-                : ListView(padding: const EdgeInsets.only(top: 10), children: [for (final e in res) WordTile(e)]))
-            : ListView(padding: const EdgeInsets.all(16), children: [
-                Row(children: [
-                  Expanded(
-                      child: _Stat('${state.words.length}', 'Mots', turquoise, Icons.abc)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                      child: _Stat('${state.phrases.length}', 'Phrases', orange, Icons.chat)),
-                ]),
-                const SizedBox(height: 20),
+                : ListView(
+                    padding: const EdgeInsets.only(top: 10),
+                    children: [for (final e in res) WordTile(e)]))
+            : ListView(padding: const EdgeInsets.only(top: 14), children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(children: [
+                    _Pill(Icons.abc, '${state.words.length} mots', violet),
+                    const SizedBox(width: 8),
+                    _Pill(Icons.chat_bubble_outline, '${state.phrases.length} phrases', turquoise),
+                  ]),
+                ),
+                const SizedBox(height: 16),
                 if (wod != null) ...[
-                  const Text('✨ Mot du jour',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('✨ Mot du jour',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                  ),
                   const SizedBox(height: 4),
-                  Transform.translate(
-                      offset: const Offset(-16, 0),
-                      child: SizedBox(
-                          width: MediaQuery.of(context).size.width, child: WordTile(wod))),
+                  WordTile(wod),
                 ],
-                const SizedBox(height: 12),
-                const Text('Parcourir par thème',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 10),
-                Wrap(spacing: 10, runSpacing: 10, children: [
-                  for (final t in themes)
-                    InkWell(
-                      borderRadius: BorderRadius.circular(16),
-                      onTap: () => widget.onTheme(t),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: themeColor(t),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(themeIcon(t), color: Colors.white, size: 18),
-                          const SizedBox(width: 6),
-                          Text(cap(t),
-                              style: const TextStyle(
-                                  color: Colors.white, fontWeight: FontWeight.w700)),
-                        ]),
-                      ),
-                    ),
-                ]),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 20, 16, 0),
+                  child: Text(
+                      '🎤 Appuyez sur le micro et dites un mot en français ou en soninké.',
+                      style: TextStyle(color: Colors.black54)),
+                ),
               ]),
       ),
     ]);
   }
 }
 
-class _Stat extends StatelessWidget {
-  final String n, label;
-  final Color color;
+class _Pill extends StatelessWidget {
   final IconData icon;
-  const _Stat(this.n, this.label, this.color, this.icon);
+  final String text;
+  final Color color;
+  const _Pill(this.icon, this.text, this.color);
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [color, color.withValues(alpha: 0.7)]),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(children: [
-        Icon(icon, color: Colors.white, size: 34),
-        const SizedBox(width: 10),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(n,
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 13)),
-        ]),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 5),
+        Text(text,
+            style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12)),
       ]),
     );
   }
@@ -558,40 +686,30 @@ class _DictPageState extends State<DictPage> {
   bool frToSo = true;
   String q = '';
 
-  void _r() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    themeFilter.addListener(_r);
-  }
-
-  @override
-  void dispose() {
-    themeFilter.removeListener(_r);
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = themeFilter.value;
     final themes = state.words.map((w) => w.theme).where((t) => t.isNotEmpty).toSet().toList()..sort();
     final n = norm(q);
-    var list = state.words.where((w) {
-      if (theme != null && w.theme != theme) return false;
-      if (n.isEmpty) return true;
-      return norm(w.fr).contains(n) || norm(w.so).contains(n) || norm(w.phon).contains(n);
-    }).toList();
-    list.sort((a, b) => norm(frToSo ? a.fr : a.so).compareTo(norm(frToSo ? b.fr : b.so)));
+    final pool = state.words.where((w) => theme == null || w.theme == theme).toList();
+    var list = n.isEmpty
+        ? pool
+        : pool
+            .where((w) =>
+                norm(w.fr).contains(n) || norm(w.so).contains(n) || norm(w.phon).contains(n))
+            .toList();
+    if (n.isNotEmpty && list.isEmpty) {
+      list = state.fuzzy(pool, q);
+    } else {
+      list.sort((a, b) => norm(frToSo ? a.fr : a.so).compareTo(norm(frToSo ? b.fr : b.so)));
+    }
 
     return Column(children: [
       GradientHeader(
         title: 'Dictionnaire',
         subtitle: frToSo ? 'Français → Soninké' : 'Soninké → Français',
         child: Column(children: [
-          SearchField(hint: 'Rechercher un mot…', onChanged: (v) => setState(() => q = v)),
+          SearchField(hint: 'Écrire ou dire un mot…', onChanged: (v) => setState(() => q = v)),
           const SizedBox(height: 10),
           Row(children: [
             _Toggle('Français → Soninké', frToSo, () => setState(() => frToSo = true)),
@@ -606,9 +724,9 @@ class _DictPageState extends State<DictPage> {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           children: [
-            _Chip('Tous', null, theme == null, violet, () => themeFilter.value = null),
+            _Chip('Tous', theme == null, () => setState(() => themeFilter.value = null)),
             for (final t in themes)
-              _Chip(cap(t), themeIcon(t), theme == t, themeColor(t), () => themeFilter.value = t),
+              _Chip(cap(t), theme == t, () => setState(() => themeFilter.value = t)),
           ],
         ),
       ),
@@ -653,11 +771,9 @@ class _Toggle extends StatelessWidget {
 
 class _Chip extends StatelessWidget {
   final String label;
-  final IconData? icon;
   final bool on;
-  final Color color;
   final VoidCallback tap;
-  const _Chip(this.label, this.icon, this.on, this.color, this.tap);
+  const _Chip(this.label, this.on, this.tap);
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -669,19 +785,14 @@ class _Chip extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: on ? color : Colors.white,
-            border: Border.all(color: color, width: 1.5),
+            color: on ? violet : Colors.white,
+            border: Border.all(color: on ? violet : const Color(0xFFD9D2EE)),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: Row(children: [
-            if (icon != null) ...[
-              Icon(icon, size: 16, color: on ? Colors.white : color),
-              const SizedBox(width: 5),
-            ],
-            Text(label,
-                style: TextStyle(
-                    fontWeight: FontWeight.w700, color: on ? Colors.white : color)),
-          ]),
+          child: Text(label,
+              style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: on ? Colors.white : const Color(0xFF5A4E80))),
         ),
       ),
     );
@@ -707,13 +818,14 @@ class _PhrasesPageState extends State<PhrasesPage> {
       GradientHeader(
         title: 'Phrases utiles',
         subtitle: '${state.phrases.length} phrases du quotidien',
-        child: SearchField(hint: 'Rechercher une phrase…', onChanged: (v) => setState(() => q = v)),
+        child: SearchField(
+            hint: 'Écrire ou dire une phrase…', onChanged: (v) => setState(() => q = v)),
       ),
       Expanded(
         child: ListView.builder(
           padding: const EdgeInsets.only(top: 10, bottom: 10),
           itemCount: list.length,
-          itemBuilder: (_, i) => PhraseTile(list[i], i),
+          itemBuilder: (_, i) => PhraseTile(list[i]),
         ),
       ),
     ]);
@@ -741,7 +853,7 @@ class FavsPage extends StatelessWidget {
               ))
             : ListView(padding: const EdgeInsets.only(top: 10), children: [
                 for (final w in ws) WordTile(w),
-                for (var i = 0; i < ps.length; i++) PhraseTile(ps[i], i),
+                for (final p in ps) PhraseTile(p),
               ]),
       ),
     ]);
