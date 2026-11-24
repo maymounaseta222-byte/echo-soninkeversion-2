@@ -19,6 +19,33 @@ const degrade = LinearGradient(
   colors: [violet, Color(0xFFAB47BC), Color(0xFFFF7043)],
 );
 
+IconData themeIcon(String t) {
+  final x = t.toLowerCase();
+  if (x.isEmpty) return Icons.more_horiz;
+  if (x.contains('animaux')) return Icons.pets;
+  if (x.contains('corps')) return Icons.accessibility_new;
+  if (x.contains('cole') || x.contains('educ')) return Icons.school;
+  if (x.contains('famille')) return Icons.family_restroom;
+  if (x.contains('salut')) return Icons.waving_hand;
+  if (x.contains('aliment') || x.contains('cuisine') || x.contains('legume') || x.contains('légume')) {
+    return Icons.restaurant;
+  }
+  if (x.contains('couleur')) return Icons.palette;
+  if (x.contains('question')) return Icons.help_outline;
+  if (x.contains('politesse')) return Icons.favorite_border;
+  if (x.contains('quotidien')) return Icons.wb_sunny_outlined;
+  if (x.contains('logement') || x.contains('maison')) return Icons.home_outlined;
+  if (x.contains('admin')) return Icons.description_outlined;
+  if (x.contains('sant')) return Icons.local_hospital_outlined;
+  if (x.contains('travail') || x.contains('metier')) return Icons.work_outline;
+  if (x.contains('march') || x.contains('argent')) return Icons.shopping_bag_outlined;
+  if (x.contains('transport') || x.contains('voyage')) return Icons.directions_bus_outlined;
+  if (x.contains('nombre') || x.contains('chiffre')) return Icons.numbers;
+  if (x.contains('temps') || x.contains('date')) return Icons.schedule;
+  if (x.contains('nature') || x.contains('meteo')) return Icons.park_outlined;
+  return Icons.label_outline;
+}
+
 String cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
 // ---------- Données ----------
@@ -355,6 +382,7 @@ class _HomeState extends State<Home> {
   Widget build(BuildContext context) {
     final pages = <Widget>[
       const SearchPage(),
+      const ThemesPage(),
       const DictPage(),
       const PhrasesPage(),
       const FavsPage(),
@@ -379,7 +407,7 @@ class _HomeState extends State<Home> {
             elevation: 0,
             indicatorColor: Colors.white.withValues(alpha: 0.28),
             labelTextStyle: const WidgetStatePropertyAll(
-                TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
           ),
           child: NavigationBar(
             selectedIndex: tab,
@@ -389,6 +417,10 @@ class _HomeState extends State<Home> {
                   icon: Icon(Icons.translate, color: Colors.white70),
                   selectedIcon: Icon(Icons.translate, color: Colors.white),
                   label: 'Traduire'),
+              NavigationDestination(
+                  icon: Icon(Icons.grid_view_outlined, color: Colors.white70),
+                  selectedIcon: Icon(Icons.grid_view_rounded, color: Colors.white),
+                  label: 'Thèmes'),
               NavigationDestination(
                   icon: Icon(Icons.menu_book_outlined, color: Colors.white70),
                   selectedIcon: Icon(Icons.menu_book, color: Colors.white),
@@ -414,7 +446,9 @@ class GradientHeader extends StatelessWidget {
   final String title;
   final String? subtitle;
   final Widget? child;
-  const GradientHeader({super.key, required this.title, this.subtitle, this.child});
+  final VoidCallback? onBack;
+  const GradientHeader(
+      {super.key, required this.title, this.subtitle, this.child, this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -429,7 +463,17 @@ class GradientHeader extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            const Icon(Icons.graphic_eq, color: Colors.white, size: 28),
+            if (onBack != null)
+              InkWell(
+                onTap: onBack,
+                borderRadius: BorderRadius.circular(20),
+                child: const Padding(
+                  padding: EdgeInsets.all(2),
+                  child: Icon(Icons.arrow_back, color: Colors.white, size: 28),
+                ),
+              )
+            else
+              const Icon(Icons.graphic_eq, color: Colors.white, size: 28),
             const SizedBox(width: 8),
             Text(title,
                 style: const TextStyle(
@@ -1050,5 +1094,134 @@ class FavsPage extends StatelessWidget {
               ]),
       ),
     ]);
+  }
+}
+
+// ---------- Page Thèmes ----------
+class ThemesPage extends StatelessWidget {
+  const ThemesPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = <String, int>{};
+    for (final w in state.words) {
+      counts[w.theme] = (counts[w.theme] ?? 0) + 1;
+    }
+    final names = counts.keys.where((t) => t.isNotEmpty).toList()..sort();
+    final items = <String>[...names, if ((counts[''] ?? 0) > 0) ''];
+
+    return Column(children: [
+      GradientHeader(
+        title: 'Thèmes',
+        subtitle: '${names.length} thèmes · ${state.words.length} mots',
+      ),
+      Expanded(
+        child: GridView.count(
+          crossAxisCount: 2,
+          padding: const EdgeInsets.all(16),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 1.25,
+          children: [
+            for (final t in items) _ThemeCard(theme: t, count: counts[t] ?? 0),
+          ],
+        ),
+      ),
+    ]);
+  }
+}
+
+class _ThemeCard extends StatelessWidget {
+  final String theme;
+  final int count;
+  const _ThemeCard({required this.theme, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = theme.isEmpty ? 'Autres' : cap(theme);
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ThemeDetailPage(theme: theme)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(color: violet.withValues(alpha: 0.10), blurRadius: 10, offset: const Offset(0, 4))
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: violet.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(themeIcon(theme), color: violet, size: 22),
+            ),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              Text('$count ${count > 1 ? 'mots' : 'mot'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ThemeDetailPage extends StatelessWidget {
+  final String theme;
+  const ThemeDetailPage({super.key, required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: state,
+        builder: (context, _) {
+          final list = state.words.where((w) => w.theme == theme).toList()
+            ..sort((a, b) => norm(a.fr).compareTo(norm(b.fr)));
+          return Column(children: [
+            GradientHeader(
+              title: theme.isEmpty ? 'Autres' : cap(theme),
+              subtitle: '${list.length} ${list.length > 1 ? 'mots' : 'mot'}',
+              onBack: () => Navigator.of(context).pop(),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.fitness_center, size: 18),
+                  label: const Text("S'entraîner"),
+                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Les quiz arrivent bientôt 🎯'))),
+                ),
+              ),
+            ),
+            Expanded(
+              child: list.isEmpty
+                  ? const Center(child: Text('Aucun mot dans ce thème'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.only(top: 6, bottom: 10),
+                      itemCount: list.length,
+                      itemBuilder: (_, i) => WordTile(list[i]),
+                    ),
+            ),
+          ]);
+        },
+      ),
+    );
   }
 }
