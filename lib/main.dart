@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
@@ -161,9 +160,6 @@ class AppState extends ChangeNotifier {
   final player = AudioPlayer();
   bool loaded = false;
   String? error;
-  double textScale = 1.0;
-  bool slow = false;
-  int _playId = 0;
 
   // Apprentissage vocal : ce que le micro a entendu -> le bon mot
   final Map<String, Set<String>> learned = {};
@@ -298,8 +294,6 @@ class AppState extends ChangeNotifier {
     }
     // 3) favoris et apprentissage
     try {
-      textScale = _p?.getDouble('tscale') ?? 1.0;
-      slow = _p?.getBool('slow') ?? false;
       favs = (_p?.getStringList('favs') ?? []).toSet();
       for (final rec in _p?.getStringList('learned') ?? <String>[]) {
         final parts = rec.split('\t');
@@ -374,39 +368,12 @@ class AppState extends ChangeNotifier {
     return b.toString();
   }
 
-  void setScale(double v) {
-    textScale = v;
-    _p?.setDouble('tscale', v);
-    notifyListeners();
-  }
-
-  void setSlow(bool v) {
-    slow = v;
-    _p?.setBool('slow', v);
-    notifyListeners();
-  }
-
-  Future<void> _play(String url) async {
+  Future<void> play(String url) async {
     if (url.isEmpty) return;
     try {
-      await player.stop();
       await player.setUrl(Uri.encodeFull(url));
-      await player.setSpeed(slow ? 0.7 : 1.0);
       await player.play();
     } catch (_) {}
-  }
-
-  Future<void> play(String url) async {
-    _playId++;
-    await _play(url);
-  }
-
-  // Français puis soninké, d'un seul appui
-  Future<void> playBoth(Entry e, {bool soFirst = false}) async {
-    final id = ++_playId;
-    await _play(soFirst ? e.audioSo : e.audioFr);
-    if (id != _playId) return;
-    await _play(soFirst ? e.audioFr : e.audioSo);
   }
 
   // Score de ressemblance (le plus petit = le mieux), à l'écrit et au son.
@@ -481,31 +448,21 @@ class AppState extends ChangeNotifier {
 
 final state = AppState();
 final themeFilter = ValueNotifier<String?>(null);
-final tabNotifier = ValueNotifier<int>(0);
-final micOn = ValueNotifier<bool>(false);
 
 // ---------- Application ----------
 class SoninkeEchoApp extends StatelessWidget {
   const SoninkeEchoApp({super.key});
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-      listenable: state,
-      builder: (context, _) => MaterialApp(
+  Widget build(BuildContext context) => MaterialApp(
         title: "Sonink'Écho",
         debugShowCheckedModeBanner: false,
-        builder: (c, child) => MediaQuery(
-          data: MediaQuery.of(c).copyWith(
-              textScaler: TextScaler.linear(
-                  MediaQuery.textScalerOf(c).scale(1.0) * state.textScale)),
-          child: child!,
-        ),
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: violet),
           scaffoldBackgroundColor: fond,
           useMaterial3: true,
         ),
         home: const Home(),
-      ));
+      );
 }
 
 class Home extends StatefulWidget {
@@ -520,22 +477,16 @@ class _HomeState extends State<Home> {
     if (mounted) setState(() {});
   }
 
-  void _tabChanged() {
-    if (mounted) setState(() => tab = tabNotifier.value);
-  }
-
   @override
   void initState() {
     super.initState();
     state.addListener(_rebuild);
-    tabNotifier.addListener(_tabChanged);
     state.load();
   }
 
   @override
   void dispose() {
     state.removeListener(_rebuild);
-    tabNotifier.removeListener(_tabChanged);
     super.dispose();
   }
 
@@ -559,79 +510,45 @@ class _HomeState extends State<Home> {
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontSize: 16, color: Colors.red))))
               : pages[tab]),
-      bottomNavigationBar: SafeArea(
-        child: _NavBar(tab: tab, onTap: (i) => tabNotifier.value = i),
-      ),
-    );
-  }
-}
-
-class _NavItem {
-  final IconData icon;
-  final String label;
-  final Color color;
-  const _NavItem(this.icon, this.label, this.color);
-}
-
-const _navItems = [
-  _NavItem(Icons.record_voice_over_rounded, 'Traduire', violet),
-  _NavItem(Icons.category_rounded, 'Thèmes', orange),
-  _NavItem(Icons.menu_book_rounded, 'Dictionnaire', Color(0xFF2979FF)),
-  _NavItem(Icons.forum_rounded, 'Phrases', turquoise),
-  _NavItem(Icons.favorite_rounded, 'Favoris', Color(0xFFE91E63)),
-];
-
-class _NavBar extends StatelessWidget {
-  final int tab;
-  final ValueChanged<int> onTap;
-  const _NavBar({required this.tab, required this.onTap});
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(color: violet.withValues(alpha: 0.18), blurRadius: 18, offset: const Offset(0, 4))
-        ],
-      ),
-      child: Row(children: [
-        for (var i = 0; i < _navItems.length; i++)
-          Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(22),
-              onTap: () => onTap(i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-                decoration: BoxDecoration(
-                  color: i == tab
-                      ? _navItems[i].color.withValues(alpha: 0.14)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(_navItems[i].icon,
-                      size: i == tab ? 30 : 26,
-                      color: i == tab
-                          ? _navItems[i].color
-                          : _navItems[i].color.withValues(alpha: 0.55)),
-                  const SizedBox(height: 2),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(_navItems[i].label,
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: i == tab ? FontWeight.w800 : FontWeight.w600,
-                            color: i == tab ? _navItems[i].color : Colors.black54)),
-                  ),
-                ]),
-              ),
-            ),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(gradient: degrade),
+        child: NavigationBarTheme(
+          data: NavigationBarThemeData(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            indicatorColor: Colors.white.withValues(alpha: 0.28),
+            labelTextStyle: const WidgetStatePropertyAll(
+                TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
           ),
-      ]),
+          child: NavigationBar(
+            selectedIndex: tab,
+            onDestinationSelected: (i) => setState(() => tab = i),
+            destinations: const [
+              NavigationDestination(
+                  icon: Icon(Icons.translate, color: Colors.white70),
+                  selectedIcon: Icon(Icons.translate, color: Colors.white),
+                  label: 'Traduire'),
+              NavigationDestination(
+                  icon: Icon(Icons.grid_view_outlined, color: Colors.white70),
+                  selectedIcon: Icon(Icons.grid_view_rounded, color: Colors.white),
+                  label: 'Thèmes'),
+              NavigationDestination(
+                  icon: Icon(Icons.menu_book_outlined, color: Colors.white70),
+                  selectedIcon: Icon(Icons.menu_book, color: Colors.white),
+                  label: 'Dictionnaire'),
+              NavigationDestination(
+                  icon: Icon(Icons.chat_bubble_outline, color: Colors.white70),
+                  selectedIcon: Icon(Icons.chat_bubble, color: Colors.white),
+                  label: 'Phrases'),
+              NavigationDestination(
+                  icon: Icon(Icons.star_border, color: Colors.white70),
+                  selectedIcon: Icon(Icons.star, color: Colors.white),
+                  label: 'Favoris'),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -642,9 +559,8 @@ class GradientHeader extends StatelessWidget {
   final String? subtitle;
   final Widget? child;
   final VoidCallback? onBack;
-  final Widget? trailing;
   const GradientHeader(
-      {super.key, required this.title, this.subtitle, this.child, this.onBack, this.trailing});
+      {super.key, required this.title, this.subtitle, this.child, this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -674,8 +590,6 @@ class GradientHeader extends StatelessWidget {
             Text(title,
                 style: const TextStyle(
                     color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
-            const Spacer(),
-            if (trailing != null) trailing!,
           ]),
           if (subtitle != null) ...[
             const SizedBox(height: 4),
@@ -714,31 +628,27 @@ class _SearchFieldState extends State<SearchField> {
 
   @override
   void dispose() {
-    micOn.value = false;
     stt.cancel();
     ctrl.dispose();
     super.dispose();
   }
 
-  void _setL(bool v) {
-    micOn.value = v;
-    if (mounted) setState(() => listening = v);
-  }
-
   Future<void> toggleMic() async {
     if (listening) {
       await stt.stop();
-      _setL(false);
+      if (mounted) setState(() => listening = false);
       return;
     }
     if (!ready) {
       try {
         ready = await stt.initialize(
           onStatus: (s) {
-            if (s == 'done' || s == 'notListening') _setL(false);
+            if ((s == 'done' || s == 'notListening') && mounted) {
+              setState(() => listening = false);
+            }
           },
           onError: (e) {
-            _setL(false);
+            if (mounted) setState(() => listening = false);
           },
         );
       } catch (_) {
@@ -753,7 +663,7 @@ class _SearchFieldState extends State<SearchField> {
       }
       return;
     }
-    _setL(true);
+    setState(() => listening = true);
     await stt.listen(
       localeId: 'fr_FR',
       listenFor: const Duration(seconds: 8),
@@ -896,199 +806,55 @@ class CardShell extends StatelessWidget {
   }
 }
 
-// Gros bouton rond : la langue connue d'abord, puis la langue à apprendre
-class PlayBtn extends StatelessWidget {
-  final Entry e;
-  final bool soKnown;
-  final double size;
-  const PlayBtn(this.e, {super.key, this.soKnown = false, this.size = 56});
-  @override
-  Widget build(BuildContext context) {
-    final has = e.audioFr.isNotEmpty || e.audioSo.isNotEmpty;
-    return InkWell(
-      customBorder: const CircleBorder(),
-      onTap: has ? () => state.playBoth(e, soFirst: soKnown) : null,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: has ? degrade : null,
-          color: has ? null : Colors.grey.shade300,
-        ),
-        child: Icon(Icons.volume_up_rounded, color: Colors.white, size: size * 0.55),
-      ),
-    );
-  }
-}
-
-// soKnown = true : l'utilisateur cherche depuis le soninké (mot soninké petit, français en gros)
 class WordTile extends StatelessWidget {
   final Entry e;
-  final bool soKnown;
-  const WordTile(this.e, {super.key, this.soKnown = false});
+  const WordTile(this.e, {super.key});
   @override
   Widget build(BuildContext context) {
-    final big = soKnown ? e.fr : e.so;
-    final small = soKnown ? e.so : e.fr;
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () {
-        if (state.lastHeard.isNotEmpty) {
-          final h = List<String>.from(state.lastHeard);
-          state.lastHeard = [];
-          state.learn(e, h);
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('Retenu : « ${h.first} » = ${e.so}')));
-          return;
-        }
-        Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => WordDetailPage(e, soKnown: soKnown)));
+        if (state.lastHeard.isEmpty) return;
+        final h = List<String>.from(state.lastHeard);
+        state.lastHeard = [];
+        state.learn(e, h);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Retenu : « ${h.first} » = ${e.so}')));
       },
       child: CardShell(
-        color: violet,
-        child: Row(children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(big,
-                  style: const TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.w800, color: violet)),
-              const SizedBox(height: 2),
-              Text(small, style: const TextStyle(fontSize: 14, color: Colors.black54)),
-            ]),
-          ),
-          PlayBtn(e, soKnown: soKnown),
+      color: violet,
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(e.so,
+                style: const TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w800, color: violet)),
+            const SizedBox(height: 2),
+            Text(e.fr, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+            if (e.theme.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFEFEAFB), borderRadius: BorderRadius.circular(10)),
+                child: Text(cap(e.theme),
+                    style: const TextStyle(
+                        color: Color(0xFF6B5E8F), fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ]),
+        ),
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            if (e.audioFr.isNotEmpty)
+              AudioBtn(label: 'FR', url: e.audioFr, color: const Color(0xFF2979FF)),
+            if (e.audioSo.isNotEmpty)
+              AudioBtn(label: 'SO', url: e.audioSo, color: const Color(0xFF00A86B)),
+          ]),
           FavBtn(e.id),
         ]),
-      ),
-    );
-  }
-}
-
-List<Widget> _audioPair(Entry e, bool soKnown) {
-  final so = _BigAudio('Écouter en soninké', const Color(0xFF00A86B), e.audioSo);
-  final fr = _BigAudio('Écouter en français', const Color(0xFF2979FF), e.audioFr);
-  return soKnown
-      ? [so, const SizedBox(height: 12), fr]
-      : [fr, const SizedBox(height: 12), so];
-}
-
-class _BigAudio extends StatelessWidget {
-  final String label;
-  final Color color;
-  final String url;
-  const _BigAudio(this.label, this.color, this.url);
-  @override
-  Widget build(BuildContext context) {
-    final has = url.isNotEmpty;
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onTap: has ? () => state.play(url) : null,
-      child: Container(
-        height: 68,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: has ? color : Colors.grey.shade300,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.volume_up_rounded, color: Colors.white, size: 32),
-          const SizedBox(width: 10),
-          Text(has ? label : 'Audio bientôt disponible',
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-        ]),
-      ),
-    );
-  }
-}
-
-// ---------- Fiche d'un mot ----------
-class WordDetailPage extends StatelessWidget {
-  final Entry e;
-  final bool soKnown;
-  const WordDetailPage(this.e, {super.key, this.soKnown = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: ListenableBuilder(
-        listenable: state,
-        builder: (context, _) {
-          final fr = norm(e.fr);
-          final ex = fr.length < 3
-              ? <Phrase>[]
-              : state.phrases.where((p) => norm(p.fr).contains(fr)).take(3).toList();
-          return Column(children: [
-            GradientHeader(
-              title: e.theme.isEmpty ? 'Mot' : cap(e.theme),
-              onBack: () => Navigator.of(context).pop(),
-            ),
-            Expanded(
-              child: ListView(padding: const EdgeInsets.all(16), children: [
-                Container(
-                  padding: const EdgeInsets.fromLTRB(20, 24, 12, 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                          color: violet.withValues(alpha: 0.14),
-                          blurRadius: 14,
-                          offset: const Offset(0, 5))
-                    ],
-                  ),
-                  child: Column(children: [
-                    Text(soKnown ? e.fr : e.so,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            fontSize: 38, fontWeight: FontWeight.w800, color: violet)),
-                    const SizedBox(height: 8),
-                    Text(soKnown ? e.so : e.fr,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 20, color: Colors.black54)),
-                    Align(alignment: Alignment.centerRight, child: FavBtn(e.id)),
-                  ]),
-                ),
-                const SizedBox(height: 16),
-                ..._audioPair(e, soKnown),
-                const SizedBox(height: 12),
-                InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: () => state.setSlow(!state.slow),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: state.slow ? const Color(0xFFFFF1D6) : Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                          color: state.slow ? orange : const Color(0xFFD9D2EE)),
-                    ),
-                    child: Row(children: [
-                      const Text('🐢', style: TextStyle(fontSize: 26)),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text('Écouter lentement',
-                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-                      ),
-                      Switch(value: state.slow, onChanged: state.setSlow),
-                    ]),
-                  ),
-                ),
-                if (ex.isNotEmpty) ...[
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(4, 22, 0, 4),
-                    child: Text('Dans une phrase',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                  ),
-                  for (final p in ex) PhraseTile(p),
-                ],
-              ]),
-            ),
-          ]);
-        },
-      ),
-    );
+      ]),
+    ));
   }
 }
 
@@ -1115,183 +881,7 @@ class PhraseTile extends StatelessWidget {
   }
 }
 
-// ---------- Réglages (taille du texte, vitesse audio) ----------
-class _Choice extends StatelessWidget {
-  final String label;
-  final bool on;
-  final double size;
-  final VoidCallback tap;
-  const _Choice(this.label, this.on, this.tap, {this.size = 16});
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: tap,
-          child: Container(
-            height: 56,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: on ? violet : Colors.white,
-              border: Border.all(color: on ? violet : const Color(0xFFD9D2EE)),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Text(label,
-                style: TextStyle(
-                    fontSize: size,
-                    fontWeight: FontWeight.w800,
-                    color: on ? Colors.white : const Color(0xFF5A4E80))),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-void showSettings(BuildContext context) {
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: fond,
-    builder: (_) => ListenableBuilder(
-      listenable: state,
-      builder: (c, _) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Taille du texte',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 10),
-          Row(children: [
-            _Choice('A', state.textScale == 1.0, () => state.setScale(1.0), size: 16),
-            _Choice('A+', state.textScale == 1.2, () => state.setScale(1.2), size: 20),
-            _Choice('A++', state.textScale == 1.4, () => state.setScale(1.4), size: 24),
-          ]),
-          const SizedBox(height: 22),
-          const Text("Vitesse de l'audio",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 10),
-          Row(children: [
-            _Choice('Normal', !state.slow, () => state.setSlow(false)),
-            _Choice('Lent 🐢', state.slow, () => state.setSlow(true)),
-          ]),
-        ]),
-      ),
-    ),
-  );
-}
-
 // ---------- Page Traduire ----------
-class _BigMic extends StatelessWidget {
-  final VoidCallback onTap;
-  const _BigMic({required this.onTap});
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: micOn,
-      builder: (context, on, _) => Column(children: [
-        InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: on
-                  ? const LinearGradient(colors: [Color(0xFFE53935), Color(0xFFFF7043)])
-                  : degrade,
-              boxShadow: [
-                BoxShadow(
-                    color: (on ? Colors.red : violet).withValues(alpha: 0.35),
-                    blurRadius: on ? 30 : 18,
-                    spreadRadius: on ? 6 : 0,
-                    offset: const Offset(0, 6))
-              ],
-            ),
-            child: Icon(on ? Icons.hearing : Icons.mic, color: Colors.white, size: 60),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(on ? 'Je vous écoute…' : 'Touchez et parlez',
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: violet)),
-        const SizedBox(height: 2),
-        const Text('en français ou en soninké',
-            style: TextStyle(fontSize: 15, color: Colors.black54)),
-      ]),
-    );
-  }
-}
-
-class _Shortcut extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final int tab;
-  const _Shortcut(this.icon, this.label, this.color, this.tab);
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => tabNotifier.value = tab,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(color: color.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 4))
-              ],
-            ),
-            child: Column(children: [
-              Icon(icon, color: color, size: 36),
-              const SizedBox(height: 6),
-              Text(label,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: color)),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _WordOfDay extends StatelessWidget {
-  final Entry e;
-  const _WordOfDay(this.e);
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => WordDetailPage(e))),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: violet.withValues(alpha: 0.35), width: 1.5),
-        ),
-        child: Row(children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('✨ Mot du jour',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: orange)),
-              const SizedBox(height: 2),
-              Text(e.so,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: violet)),
-              Text(e.fr, style: const TextStyle(fontSize: 14, color: Colors.black54)),
-            ]),
-          ),
-          PlayBtn(e, size: 44),
-        ]),
-      ),
-    );
-  }
-}
-
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
   @override
@@ -1301,40 +891,23 @@ class SearchPage extends StatefulWidget {
 class _SearchPageState extends State<SearchPage> {
   String q = '';
   List<String> alts = [];
-  bool voice = false;
-  final fieldKey = GlobalKey<_SearchFieldState>();
-
-  // true si la personne est partie d'un mot soninké
-  bool soKnownFor(Entry e) {
-    final qs = [q, ...alts].map(norm).where((x) => x.isNotEmpty).toList();
-    final frHit = qs.any((n) => norm(e.fr).contains(n));
-    final soHit = qs.any((n) =>
-        norm(e.so).contains(n) || (e.phon.isNotEmpty && norm(e.phon).contains(n)));
-    if (soHit && !frHit) return true;
-    if (frHit) return false;
-    return voice; // proche au son : le micro a entendu du soninké
-  }
 
   @override
   Widget build(BuildContext context) {
     final res = state.search(q, alts: alts);
+    final wod = state.words.isEmpty
+        ? null
+        : state.words[DateTime.now().day % state.words.length];
 
     return Column(children: [
       GradientHeader(
         title: "Sonink'Écho",
         subtitle: 'Votre traducteur français ⇄ soninké',
-        trailing: IconButton(
-          tooltip: 'Réglages',
-          icon: const Icon(Icons.text_fields_rounded, color: Colors.white, size: 28),
-          onPressed: () => showSettings(context),
-        ),
         child: SearchField(
-          key: fieldKey,
           hint: 'Écrire ou dire un mot…',
           onChanged: (v) {
             state.lastHeard = [];
             setState(() {
-              voice = false;
               q = v;
               alts = [];
             });
@@ -1342,7 +915,6 @@ class _SearchPageState extends State<SearchPage> {
           onVoice: (a) {
             state.lastHeard = a;
             setState(() {
-              voice = true;
               q = a.first;
               alts = a;
             });
@@ -1352,46 +924,39 @@ class _SearchPageState extends State<SearchPage> {
       Expanded(
         child: q.trim().isNotEmpty
             ? (res.isEmpty
-                ? const Center(child: Text('Aucun résultat 🤔', style: TextStyle(fontSize: 18)))
-                : ListView(padding: const EdgeInsets.only(top: 10), children: [
-                    if (state.lastHeard.isNotEmpty)
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
-                        child: Text(
-                            "Le micro s'est trompé ? Touchez le bon mot : l'appli apprend. 👆",
-                            style: TextStyle(color: Colors.black54, fontSize: 14)),
-                      ),
-                    for (final e in res) WordTile(e, soKnown: soKnownFor(e)),
-                  ]))
-            : ListView(padding: const EdgeInsets.only(top: 22, bottom: 16), children: [
-                _BigMic(onTap: () => fieldKey.currentState?.toggleMic()),
-                const SizedBox(height: 24),
-                const SizedBox(height: 16),
+                ? const Center(child: Text('Aucun résultat 🤔'))
+                : ListView(
+                    padding: const EdgeInsets.only(top: 10),
+                    children: [for (final e in res) WordTile(e)]))
+            : ListView(padding: const EdgeInsets.only(top: 14), children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () => openQuiz(context, 'Quiz du jour', state.words, 5),
-                    child: Container(
-                      height: 62,
-                      decoration: BoxDecoration(
-                        gradient: degrade,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(Icons.emoji_events_rounded, color: Colors.white, size: 30),
-                        SizedBox(width: 10),
-                        Text('Quiz du jour',
-                            style: TextStyle(
-                                color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-                      ]),
-                    ),
-                  ),
+                  child: Row(children: [
+                    _Pill(Icons.abc, '${state.words.length} mots', violet),
+                    const SizedBox(width: 8),
+                    _Pill(Icons.chat_bubble_outline, '${state.phrases.length} phrases', turquoise),
+                  ]),
                 ),
                 const SizedBox(height: 16),
+                if (wod != null) ...[
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('✨ Mot du jour',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                  ),
+                  const SizedBox(height: 4),
+                  WordTile(wod),
+                ],
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 20, 16, 0),
+                  child: Text(
+                      '🎤 Appuyez sur le micro et dites un mot en français ou en soninké. '
+                      'Si le bon mot apparaît dans la liste, touchez-le : l\'appli apprendra et le reconnaîtra mieux la prochaine fois.',
+                      style: TextStyle(color: Colors.black54)),
+                ),
                 if (state.learnedRaw.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: Align(
                       alignment: Alignment.centerLeft,
                       child: OutlinedButton.icon(
@@ -1507,8 +1072,7 @@ class _DictPageState extends State<DictPage> {
         child: list.isEmpty
             ? const Center(child: Text('Aucun mot trouvé'))
             : ListView.builder(
-                itemCount: list.length,
-                itemBuilder: (_, i) => WordTile(list[i], soKnown: !frToSo)),
+                itemCount: list.length, itemBuilder: (_, i) => WordTile(list[i])),
       ),
     ]);
   }
@@ -1645,251 +1209,6 @@ class FavsPage extends StatelessWidget {
   }
 }
 
-// ---------- Quiz : j'entends un mot soninké, je choisis sa traduction ----------
-class _QItem {
-  final Entry answer;
-  final List<Entry> options;
-  _QItem(this.answer, this.options);
-}
-
-List<_QItem> buildQuiz(List<Entry> pool, int n) {
-  final rnd = Random();
-  final base = pool.length >= 4 ? pool : state.words;
-  final cands = pool.where((e) => e.audioSo.isNotEmpty).toList()..shuffle(rnd);
-  final out = <_QItem>[];
-  for (final a in cands) {
-    if (out.length >= n) break;
-    final others = base.where((e) => norm(e.fr) != norm(a.fr)).toList()..shuffle(rnd);
-    final seen = <String>{norm(a.fr)};
-    final opts = <Entry>[a];
-    for (final o in others) {
-      if (opts.length >= 4) break;
-      if (seen.add(norm(o.fr))) opts.add(o);
-    }
-    if (opts.length < 4) continue;
-    opts.shuffle(rnd);
-    out.add(_QItem(a, opts));
-  }
-  return out;
-}
-
-void openQuiz(BuildContext context, String title, List<Entry> pool, int n) {
-  if (buildQuiz(pool, 1).isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text("Pas encore assez de mots avec audio pour faire un quiz ici.")));
-    return;
-  }
-  Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => QuizPage(title: title, pool: pool, count: n)));
-}
-
-class QuizPage extends StatefulWidget {
-  final String title;
-  final List<Entry> pool;
-  final int count;
-  const QuizPage({super.key, required this.title, required this.pool, required this.count});
-  @override
-  State<QuizPage> createState() => _QuizPageState();
-}
-
-class _QuizPageState extends State<QuizPage> {
-  late List<_QItem> items;
-  int i = 0;
-  int score = 0;
-  Entry? picked;
-  bool done = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _start();
-  }
-
-  void _start() {
-    items = buildQuiz(widget.pool, widget.count);
-    i = 0;
-    score = 0;
-    picked = null;
-    done = items.isEmpty;
-    if (items.isNotEmpty) state.play(items[0].answer.audioSo);
-  }
-
-  void _answer(Entry o) {
-    final a = items[i].answer;
-    setState(() {
-      picked = o;
-      if (o == a) score++;
-    });
-    state.play(a.audioFr);
-  }
-
-  void _next() {
-    if (i + 1 >= items.length) {
-      setState(() => done = true);
-      return;
-    }
-    setState(() {
-      i++;
-      picked = null;
-    });
-    state.play(items[i].answer.audioSo);
-  }
-
-  Widget _answerBtn(Entry o) {
-    final a = items[i].answer;
-    Color bg = Colors.white;
-    Color fg = const Color(0xFF3B2F66);
-    Color border = const Color(0xFFD9D2EE);
-    if (picked != null) {
-      if (o == a) {
-        bg = const Color(0xFF2E9E5B);
-        fg = Colors.white;
-        border = bg;
-      } else if (o == picked) {
-        bg = const Color(0xFFE53935);
-        fg = Colors.white;
-        border = bg;
-      }
-    }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: picked == null ? () => _answer(o) : null,
-        child: Container(
-          height: 66,
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: border, width: 2),
-          ),
-          child: Text(cap(o.fr),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: fg)),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final total = items.length;
-    return Scaffold(
-      body: Column(children: [
-        GradientHeader(
-          title: widget.title,
-          subtitle: done ? 'Terminé' : 'Question ${i + 1} sur $total',
-          onBack: () => Navigator.of(context).pop(),
-        ),
-        if (!done)
-          LinearProgressIndicator(
-              value: (i + (picked != null ? 1 : 0)) / total,
-              minHeight: 6,
-              color: turquoise,
-              backgroundColor: const Color(0xFFE6E0F7)),
-        Expanded(child: done ? _result(total) : _question()),
-      ]),
-    );
-  }
-
-  Widget _question() {
-    final q = items[i];
-    final ok = picked == q.answer;
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      const SizedBox(height: 8),
-      const Text('Écoutez, puis choisissez la bonne réponse',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 18),
-      Center(
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: () => state.play(q.answer.audioSo),
-          child: Container(
-            width: 112,
-            height: 112,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: degrade,
-              boxShadow: [
-                BoxShadow(color: violet.withValues(alpha: 0.35), blurRadius: 18, offset: const Offset(0, 6))
-              ],
-            ),
-            child: const Icon(Icons.volume_up_rounded, color: Colors.white, size: 58),
-          ),
-        ),
-      ),
-      const SizedBox(height: 22),
-      for (final o in q.options) _answerBtn(o),
-      if (picked != null) ...[
-        const SizedBox(height: 4),
-        Text(
-            ok
-                ? '✅ Bravo !'
-                : 'Ce n\'était pas ça. La bonne réponse : ${cap(q.answer.fr)} (${q.answer.so})',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: ok ? const Color(0xFF2E9E5B) : const Color(0xFFE53935))),
-        const SizedBox(height: 12),
-        InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: _next,
-          child: Container(
-            height: 62,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(gradient: degrade, borderRadius: BorderRadius.circular(20)),
-            child: Text(i + 1 >= items.length ? 'Voir mon score' : 'Suivant  ➜',
-                style: const TextStyle(
-                    color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-          ),
-        ),
-      ],
-    ]);
-  }
-
-  Widget _result(int total) {
-    final good = total > 0 && score * 2 >= total;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(total == 0 ? '🤔' : (good ? '🎉' : '💪'), style: const TextStyle(fontSize: 72)),
-          const SizedBox(height: 8),
-          Text(total == 0 ? 'Pas de quiz possible' : (good ? 'Bravo !' : 'Continuez, ça vient !'),
-              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: violet)),
-          const SizedBox(height: 8),
-          Text('$score / $total',
-              style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 28),
-          InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: () => setState(_start),
-            child: Container(
-              height: 62,
-              width: double.infinity,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(gradient: degrade, borderRadius: BorderRadius.circular(20)),
-              child: const Text('Rejouer',
-                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Terminer', style: TextStyle(fontSize: 18)),
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
 // ---------- Page Thèmes ----------
 class ThemesPage extends StatelessWidget {
   const ThemesPage({super.key});
@@ -1911,10 +1230,10 @@ class ThemesPage extends StatelessWidget {
       Expanded(
         child: GridView.count(
           crossAxisCount: 2,
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 1.9,
+          padding: const EdgeInsets.all(16),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 1.25,
           children: [
             for (final t in items) _ThemeCard(theme: t, count: counts[t] ?? 0),
           ],
@@ -1938,38 +1257,34 @@ class _ThemeCard extends StatelessWidget {
         MaterialPageRoute(builder: (_) => ThemeDetailPage(theme: theme)),
       ),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(color: violet.withValues(alpha: 0.10), blurRadius: 10, offset: const Offset(0, 4))
           ],
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Container(
-              padding: const EdgeInsets.all(9),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: violet.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: Icon(themeIcon(theme), color: violet, size: 24),
+              child: Icon(themeIcon(theme), color: violet, size: 22),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                    Text('$count ${count > 1 ? 'mots' : 'mot'}',
-                        style: const TextStyle(fontSize: 13, color: Colors.black54)),
-                  ]),
-            ),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              Text('$count ${count > 1 ? 'mots' : 'mot'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            ]),
           ],
         ),
       ),
@@ -2000,10 +1315,10 @@ class ThemeDetailPage extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
-                  icon: const Icon(Icons.play_circle_fill_rounded, size: 22),
-                  label: const Text("S'entraîner (quiz)", style: TextStyle(fontSize: 16)),
-                  onPressed: () => openQuiz(
-                      context, theme.isEmpty ? 'Autres' : cap(theme), list, 8),
+                  icon: const Icon(Icons.fitness_center, size: 18),
+                  label: const Text("S'entraîner"),
+                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Les quiz arrivent bientôt 🎯'))),
                 ),
               ),
             ),
